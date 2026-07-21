@@ -373,4 +373,3 @@ private fun Context.findActivity(): Activity? {
 
     return current as? Activity
 }
-}
