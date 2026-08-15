@@ -22,6 +22,41 @@ rootProject.allprojects {
         mavenCentral()
         maven { url "https://jitpack.io" }
     }
+
+    // =========================================================
+    // PROTOBUF CONFLICT FIX
+    //
+    // flutter_reactive_ble запрашивает:
+    // protobuf-javalite:3.25.3
+    //
+    // Kinescope запрашивает:
+    // protobuf-java:3.25.3
+    //
+    // Оба содержат одинаковые com.google.protobuf.* классы,
+    // поэтому Android получает Duplicate class.
+    //
+    // Вместо удаления Protobuf унифицируем runtime:
+    // запрос javalite 3.25.3 заменяем на protobuf-java 3.25.3.
+    //
+    // Таким образом:
+    // - Kinescope остаётся на своём protobuf-java;
+    // - BLE остаётся установленным и работает со своим lite-кодом;
+    // - в APK попадает только одна реализация Protobuf.
+    // =========================================================
+
+    configurations.configureEach {
+        resolutionStrategy.eachDependency { details ->
+            if (
+                details.requested.group == "com.google.protobuf" &&
+                details.requested.name == "protobuf-javalite" &&
+                details.requested.version == "3.25.3"
+            ) {
+                details.useTarget(
+                    "com.google.protobuf:protobuf-java:3.25.3"
+                )
+            }
+        }
+    }
 }
 
 apply plugin: "com.android.library"
@@ -49,5 +84,7 @@ android {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+
+    // Сам Kinescope SDK не меняем.
     implementation "com.github.kinescope:kotlin-kinescope-player:0.1.1"
 }
