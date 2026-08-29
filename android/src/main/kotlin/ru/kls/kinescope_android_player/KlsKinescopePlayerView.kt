@@ -89,9 +89,6 @@ class KlsKinescopePlayerView(
         playerView.setPlayer(player)
         playerView.applyTemplateOptions()
 
-        fullscreenPlayerView.setPlayer(player)
-        fullscreenPlayerView.applyTemplateOptions()
-
         playerView.onFullscreenButtonCallback = {
             enterFullscreen()
         }
@@ -111,6 +108,14 @@ class KlsKinescopePlayerView(
                 videoId,
                 onSuccess = {
                     Log.d(TAG, "Video loaded: $videoId")
+
+                    // SurfaceView may be created before Flutter finishes the
+                    // platform-view layout. Request one more layout pass once
+                    // Kinescope has prepared the video surface.
+                    playerView.post {
+                        playerView.requestLayout()
+                        playerView.invalidate()
+                    }
                 },
                 onFailed = { error ->
                     Log.e(
@@ -193,6 +198,12 @@ class KlsKinescopePlayerView(
                     fullscreenPlayerView,
                     player
                 )
+
+                fullscreenPlayerView.applyTemplateOptions()
+                fullscreenPlayerView.requestLayout()
+                fullscreenPlayerView.invalidate()
+                root.requestLayout()
+                root.invalidate()
             } catch (error: Throwable) {
                 Log.e(
                     TAG,
@@ -252,6 +263,10 @@ class KlsKinescopePlayerView(
                 playerView,
                 player
             )
+
+            playerView.applyTemplateOptions()
+            playerView.requestLayout()
+            playerView.invalidate()
         } catch (error: Throwable) {
             Log.w(
                 TAG,

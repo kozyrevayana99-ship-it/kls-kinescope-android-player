@@ -1,6 +1,6 @@
 name: kls_kinescope_android_player
 description: Native Android Kinescope player bridge for Flutter and FlutterFlow.
-version: 0.1.0
+version: 0.1.1
 homepage: https://github.com/kozyrevyana99-ship-it/kls-kinescope-android-player
 
 environment:
