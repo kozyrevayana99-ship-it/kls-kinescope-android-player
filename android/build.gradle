@@ -90,25 +90,31 @@ dependencies {
     // KINESCOPE
     //
     // Версию пока НЕ меняем.
-    // В 0.1.1 уже есть:
-    // - background playback;
-    // - MediaSession;
-    // - PiP;
-    // - seekToPosition();
     // =========================================================
 
     implementation "com.github.kinescope:kotlin-kinescope-player:0.1.1"
 
     // =========================================================
-    // DIRECT DEPENDENCIES НАШЕГО PLUGIN-КОДА
+    // MEDIA3
     //
-    // Kinescope 0.1.1 сам использует Media3 1.8.0.
-    // Берём ту же версию, чтобы не смешивать Media3.
+    // Наш KlsKinescopePlayerView.kt напрямую использует:
+    //
+    // androidx.media3.common.Player
+    // androidx.media3.exoplayer.ExoPlayer
+    //
+    // Kinescope 0.1.1 использует Media3 1.8.0,
+    // поэтому ставим ту же версию.
     // =========================================================
 
     implementation "androidx.media3:media3-common:1.8.0"
 
-    // Используем LifecycleOwner / DefaultLifecycleObserver
-    // непосредственно в KlsKinescopePlayerView.kt.
+    implementation "androidx.media3:media3-exoplayer:1.8.0"
+
+    // =========================================================
+    // LIFECYCLE
+    //
+    // Для LifecycleOwner / DefaultLifecycleObserver.
+    // =========================================================
+
     implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.7"
 }
