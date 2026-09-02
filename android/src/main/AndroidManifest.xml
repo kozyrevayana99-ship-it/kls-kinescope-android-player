@@ -1,3 +1,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Интернет для Kinescope -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Нужен Kinescope для проверки состояния сети -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!--
+        Фоновое воспроизведение.
+        KinescopePlaybackService работает как foreground service.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <!--
+        Android 14+ требует отдельный тип разрешения
+        для foreground service, который воспроизводит медиа.
+    -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!--
+        PiP поддерживается не на каждом Android-устройстве,
+        поэтому required=false — приложение сможет установиться везде.
+    -->
+    <uses-feature
+        android:name="android.software.picture_in_picture"
+        android:required="false" />
+
 </manifest>
