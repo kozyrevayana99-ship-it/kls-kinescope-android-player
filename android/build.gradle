@@ -39,8 +39,8 @@ rootProject.allprojects {
     // запрос javalite 3.25.3 заменяем на protobuf-java 3.25.3.
     //
     // Таким образом:
-    // - Kinescope остаётся на своём protobuf-java;
-    // - BLE остаётся установленным и работает со своим lite-кодом;
+    // - Kinescope остаётся на protobuf-java;
+    // - BLE остаётся установленным;
     // - в APK попадает только одна реализация Protobuf.
     // =========================================================
 
@@ -64,6 +64,7 @@ apply plugin: "kotlin-android"
 
 android {
     namespace = "ru.kls.kinescope_android_player"
+
     compileSdk = 35
 
     defaultConfig {
@@ -85,6 +86,29 @@ android {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
 
-    // Сам Kinescope SDK не меняем.
+    // =========================================================
+    // KINESCOPE
+    //
+    // Версию пока НЕ меняем.
+    // В 0.1.1 уже есть:
+    // - background playback;
+    // - MediaSession;
+    // - PiP;
+    // - seekToPosition();
+    // =========================================================
+
     implementation "com.github.kinescope:kotlin-kinescope-player:0.1.1"
+
+    // =========================================================
+    // DIRECT DEPENDENCIES НАШЕГО PLUGIN-КОДА
+    //
+    // Kinescope 0.1.1 сам использует Media3 1.8.0.
+    // Берём ту же версию, чтобы не смешивать Media3.
+    // =========================================================
+
+    implementation "androidx.media3:media3-common:1.8.0"
+
+    // Используем LifecycleOwner / DefaultLifecycleObserver
+    // непосредственно в KlsKinescopePlayerView.kt.
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.8.7"
 }
