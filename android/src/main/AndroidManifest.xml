@@ -1,30 +1,57 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Интернет для Kinescope -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- ====================================================== -->
+    <!-- NETWORK -->
+    <!-- ====================================================== -->
 
-    <!-- Нужен Kinescope для проверки состояния сети -->
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission
+        android:name="android.permission.INTERNET" />
 
-    <!--
-        Фоновое воспроизведение.
-        KinescopePlaybackService работает как foreground service.
-    -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!--
-        Android 14+ требует отдельный тип разрешения
-        для foreground service, который воспроизводит медиа.
-    -->
+
+    <!-- ====================================================== -->
+    <!-- BACKGROUND MEDIA PLAYBACK -->
+    <!-- ====================================================== -->
+
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE" />
+
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!--
-        PiP поддерживается не на каждом Android-устройстве,
-        поэтому required=false — приложение сможет установиться везде.
-    -->
+
+    <!-- ====================================================== -->
+    <!-- PICTURE IN PICTURE -->
+    <!-- ====================================================== -->
+
     <uses-feature
         android:name="android.software.picture_in_picture"
         android:required="false" />
+
+
+    <application>
+
+        <!--
+            Не создаём новую Activity.
+
+            tools:node="merge" говорит Android Manifest Merger:
+            найди MainActivity основного Flutter-приложения
+            и добавь ей поддержку Picture-in-Picture.
+
+            ${applicationId} во время сборки заменится
+            на package основного FlutterFlow-приложения.
+        -->
+
+        <activity
+            android:name="${applicationId}.MainActivity"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
+            tools:node="merge" />
+
+    </application>
 
 </manifest>
