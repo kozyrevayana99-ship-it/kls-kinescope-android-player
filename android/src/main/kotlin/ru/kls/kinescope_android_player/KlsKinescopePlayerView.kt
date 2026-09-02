@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
 import android.os.Build
+import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -21,6 +22,10 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.media3.common.Player
 
+import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.EventChannel
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
 
 import io.kinescope.sdk.models.players.syncLegacyChromeFlags
@@ -32,11 +37,19 @@ import io.kinescope.sdk.view.KinescopePlayerView
 
 class KlsKinescopePlayerView(
     context: Context,
-    params: Map<*, *>
+    params: Map<*, *>,
+    messenger: BinaryMessenger,
+    viewId: Int
 ) : PlatformView {
 
     companion object {
         private const val TAG = "KlsKinescopePlayer"
+
+        private const val METHOD_CHANNEL_PREFIX =
+            "kls_kinescope_android_player/methods"
+
+        private const val EVENT_CHANNEL_PREFIX =
+            "kls_kinescope_android_player/events"
     }
 
     // ============================================================
@@ -48,6 +61,32 @@ class KlsKinescopePlayerView(
 
     private val activity: Activity? =
         context.findActivity()
+
+    // ============================================================
+    // FLUTTER CHANNELS
+    //
+    // У каждого PlatformView свой viewId:
+    //
+    // methods/17
+    // events/17
+    //
+    // Поэтому несколько плееров друг другу не мешают.
+    // ============================================================
+
+    private val methodChannel =
+        MethodChannel(
+            messenger,
+            "$METHOD_CHANNEL_PREFIX/$viewId"
+        )
+
+    private val eventChannel =
+        EventChannel(
+            messenger,
+            "$EVENT_CHANNEL_PREFIX/$viewId"
+        )
+
+    private var eventSink: EventChannel.EventSink? =
+        null
 
     // ============================================================
     // INPUT PARAMS
@@ -73,19 +112,34 @@ class KlsKinescopePlayerView(
     /**
      * Фоновое воспроизведение.
      *
-     * По умолчанию включаем.
-     *
-     * Это означает:
-     * - при блокировке телефона звук продолжает играть;
-     * - при уходе Activity в background Kinescope подключает
-     *   свой MediaSession / PlaybackService;
-     * - после возврата не создаётся новый плеер с нуля.
+     * true:
+     * - блокировка телефона не должна останавливать playback;
+     * - Kinescope подключает PlaybackService / MediaSession;
+     * - системные media controls смогут управлять видео.
      */
     private val backgroundPlaybackEnabled: Boolean =
         params.booleanValue(
             "backgroundPlayback",
             true
         )
+
+    /**
+     * Позиция, с которой нужно продолжить видео.
+     *
+     * Приходит из Flutter в СЕКУНДАХ.
+     *
+     * Например:
+     * initialPositionSeconds = 2846
+     *
+     * = 47:26.
+     */
+    private val initialPositionMs: Long =
+        params.longValue(
+            "initialPositionSeconds",
+            0L
+        )
+            .coerceAtLeast(0L)
+            .times(1000L)
 
     // ============================================================
     // PLAYER OPTIONS
@@ -143,7 +197,8 @@ class KlsKinescopePlayerView(
     // INLINE PLAYER VIEW
     //
     // ВАЖНО:
-    // useTextureSurface = false ОСТАВЛЯЕМ.
+    //
+    // useTextureSurface = false НЕ МЕНЯЕМ.
     //
     // Для Widevine / DRM нужен SurfaceView.
     // ============================================================
@@ -168,7 +223,7 @@ class KlsKinescopePlayerView(
     // ============================================================
     // FULLSCREEN PLAYER VIEW
     //
-    // Тоже SurfaceView — DRM не ломаем.
+    // Тоже SurfaceView.
     // ============================================================
 
     private val fullscreenPlayerView =
@@ -204,7 +259,8 @@ class KlsKinescopePlayerView(
 
     private var lifecycleBound = false
 
-    private var fullscreenDialog: Dialog? = null
+    private var fullscreenDialog: Dialog? =
+        null
 
     private var isFullscreen = false
 
@@ -212,28 +268,301 @@ class KlsKinescopePlayerView(
 
     private var pipReceiverRegistered = false
 
-    /**
-     * Мы скрыли chrome перед входом в PiP.
-     */
     private var pipUiPrepared = false
+
+    /**
+     * Реальный Player уже дошёл до STATE_READY.
+     */
+    private var playerReady = false
+
+    /**
+     * Восстановление позиции выполняем ровно один раз.
+     */
+    private var initialSeekApplied =
+        initialPositionMs <= 0L
+
+    /**
+     * Нужны для корректного определения именно PLAY / PAUSE.
+     *
+     * isPlaying нельзя использовать для определения паузы:
+     * во время buffering isPlaying временно становится false.
+     *
+     * Поэтому pause определяем через playWhenReady.
+     */
+    private var lastPlayWhenReady: Boolean? =
+        null
+
+    private var hasStartedPlayback = false
+
+    private var endedEventSent = false
+
+    // ============================================================
+    // EVENT CHANNEL
+    // ============================================================
+
+    private val streamHandler =
+        object : EventChannel.StreamHandler {
+
+            override fun onListen(
+                arguments: Any?,
+                events: EventChannel.EventSink?
+            ) {
+                eventSink =
+                    events
+
+                // Если Flutter подключился уже после того,
+                // как видео подготовилось — всё равно сообщим READY.
+                if (
+                    playerReady &&
+                    !disposed
+                ) {
+                    emitEvent(
+                        type = "ready"
+                    )
+                }
+            }
+
+            override fun onCancel(
+                arguments: Any?
+            ) {
+                eventSink =
+                    null
+            }
+        }
+
+    // ============================================================
+    // METHOD CHANNEL
+    //
+    // Flutter → Kotlin
+    // ============================================================
+
+    private val methodHandler =
+        MethodChannel.MethodCallHandler {
+                call: MethodCall,
+                result: MethodChannel.Result ->
+
+            if (disposed) {
+                result.error(
+                    "PLAYER_DISPOSED",
+                    "Kinescope player is already disposed",
+                    null
+                )
+
+                return@MethodCallHandler
+            }
+
+            when (call.method) {
+
+                // ------------------------------------------------
+                // PLAY
+                // ------------------------------------------------
+
+                "play" -> {
+                    play()
+
+                    result.success(
+                        null
+                    )
+                }
+
+                // ------------------------------------------------
+                // PAUSE
+                // ------------------------------------------------
+
+                "pause" -> {
+                    pause()
+
+                    result.success(
+                        null
+                    )
+                }
+
+                // ------------------------------------------------
+                // SEEK
+                // ------------------------------------------------
+
+                "seekTo" -> {
+                    val positionMs =
+                        (
+                            call.argument<Any?>(
+                                "positionMs"
+                            ) as? Number
+                            )
+                            ?.toLong()
+                            ?: 0L
+
+                    seekToPosition(
+                        positionMs
+                    )
+
+                    result.success(
+                        null
+                    )
+                }
+
+                // ------------------------------------------------
+                // POSITION
+                // ------------------------------------------------
+
+                "getPositionMs" -> {
+                    result.success(
+                        currentPositionMs()
+                    )
+                }
+
+                // ------------------------------------------------
+                // DURATION
+                // ------------------------------------------------
+
+                "getDurationMs" -> {
+                    result.success(
+                        durationMs()
+                    )
+                }
+
+                // ------------------------------------------------
+                // IS PLAYING
+                // ------------------------------------------------
+
+                "isPlaying" -> {
+                    result.success(
+                        isPlaying()
+                    )
+                }
+
+                // ------------------------------------------------
+                // IS ENDED
+                // ------------------------------------------------
+
+                "isEnded" -> {
+                    result.success(
+                        isEnded()
+                    )
+                }
+
+                // ------------------------------------------------
+                // PiP
+                // ------------------------------------------------
+
+                "enterPictureInPicture" -> {
+                    enterPictureInPicture()
+
+                    result.success(
+                        null
+                    )
+                }
+
+                // ------------------------------------------------
+                // FULL CURRENT STATE
+                //
+                // Полезно будет для сохранения перед закрытием.
+                // ------------------------------------------------
+
+                "getState" -> {
+                    result.success(
+                        buildEventPayload(
+                            type = "state"
+                        )
+                    )
+                }
+
+                else -> {
+                    result.notImplemented()
+                }
+            }
+        }
 
     // ============================================================
     // PLAYER LISTENER
-    //
-    // Уже сейчас отслеживаем состояние.
-    //
-    // В следующем файле подключим это к Flutter EventChannel,
-    // чтобы отправлять:
-    //
-    // pause
-    // play
-    // ended
-    // position
-    // duration
     // ============================================================
 
     private val playerListener =
         object : Player.Listener {
+
+            // ----------------------------------------------------
+            // PLAY / PAUSE
+            //
+            // Используем playWhenReady, а не isPlaying.
+            //
+            // Buffering НЕ будет ошибочно считаться паузой.
+            // ----------------------------------------------------
+
+            override fun onPlayWhenReadyChanged(
+                playWhenReady: Boolean,
+                reason: Int
+            ) {
+                if (disposed) {
+                    return
+                }
+
+                val previous =
+                    lastPlayWhenReady
+
+                lastPlayWhenReady =
+                    playWhenReady
+
+                // Первый callback может просто сообщить
+                // начальное состояние false.
+                // Его как Pause не отправляем.
+                if (
+                    previous == null
+                ) {
+                    if (playWhenReady) {
+                        hasStartedPlayback = true
+                        endedEventSent = false
+
+                        emitEvent(
+                            type = "play"
+                        )
+                    }
+
+                    updateAutoEnterPictureInPicture(
+                        playWhenReady
+                    )
+
+                    return
+                }
+
+                if (
+                    previous == playWhenReady
+                ) {
+                    return
+                }
+
+                if (playWhenReady) {
+
+                    hasStartedPlayback = true
+                    endedEventSent = false
+
+                    emitEvent(
+                        type = "play"
+                    )
+
+                } else {
+
+                    // Если видео уже закончилось,
+                    // отдельный pause нам не нужен:
+                    // будет event = ended.
+                    if (
+                        hasStartedPlayback &&
+                        !isEnded()
+                    ) {
+                        emitEvent(
+                            type = "pause"
+                        )
+                    }
+                }
+
+                updateAutoEnterPictureInPicture(
+                    playWhenReady
+                )
+            }
+
+            // ----------------------------------------------------
+            // IS PLAYING
+            //
+            // Для PiP-кнопки обновляем системное состояние.
+            // ----------------------------------------------------
 
             override fun onIsPlayingChanged(
                 isPlaying: Boolean
@@ -250,11 +579,11 @@ class KlsKinescopePlayerView(
                 )
 
                 updatePictureInPictureActions()
-
-                updateAutoEnterPictureInPicture(
-                    isPlaying
-                )
             }
+
+            // ----------------------------------------------------
+            // PLAYBACK STATE
+            // ----------------------------------------------------
 
             override fun onPlaybackStateChanged(
                 playbackState: Int
@@ -266,14 +595,36 @@ class KlsKinescopePlayerView(
                 when (playbackState) {
 
                     Player.STATE_READY -> {
+
+                        playerReady =
+                            true
+
+                        endedEventSent =
+                            false
+
+                        applyInitialPositionIfNeeded()
+
                         Log.d(
                             TAG,
                             "STATE_READY " +
+                                "position=${currentPositionMs()} " +
                                 "duration=${durationMs()}"
+                        )
+
+                        emitEvent(
+                            type = "ready"
+                        )
+
+                        updateAutoEnterPictureInPicture(
+                            player
+                                .playbackPlayer
+                                ?.playWhenReady
+                                == true
                         )
                     }
 
                     Player.STATE_BUFFERING -> {
+
                         Log.d(
                             TAG,
                             "STATE_BUFFERING"
@@ -281,6 +632,7 @@ class KlsKinescopePlayerView(
                     }
 
                     Player.STATE_ENDED -> {
+
                         Log.d(
                             TAG,
                             "STATE_ENDED " +
@@ -288,12 +640,29 @@ class KlsKinescopePlayerView(
                                 "duration=${durationMs()}"
                         )
 
+                        if (
+                            !endedEventSent
+                        ) {
+                            endedEventSent =
+                                true
+
+                            emitEvent(
+                                type = "ended"
+                            )
+                        }
+
+                        hasStartedPlayback =
+                            false
+
                         updateAutoEnterPictureInPicture(
                             false
                         )
+
+                        updatePictureInPictureActions()
                     }
 
                     Player.STATE_IDLE -> {
+
                         Log.d(
                             TAG,
                             "STATE_IDLE"
@@ -301,12 +670,32 @@ class KlsKinescopePlayerView(
                     }
                 }
             }
+
+            // ----------------------------------------------------
+            // SEEK / POSITION JUMP
+            //
+            // Это НЕ сетевой запрос.
+            //
+            // Просто Flutter узнаёт новую позицию после перемотки.
+            // ----------------------------------------------------
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int
+            ) {
+                if (disposed) {
+                    return
+                }
+
+                emitEvent(
+                    type = "position"
+                )
+            }
         }
 
     // ============================================================
     // PiP REMOTE PLAY / PAUSE
-    //
-    // Кнопка в маленьком системном окне Android.
     // ============================================================
 
     private val pipReceiver =
@@ -318,7 +707,8 @@ class KlsKinescopePlayerView(
             ) {
                 if (
                     intent?.action !=
-                    KinescopePictureInPicture.ACTION_PLAY_PAUSE
+                    KinescopePictureInPicture
+                        .ACTION_PLAY_PAUSE
                 ) {
                     return
                 }
@@ -330,10 +720,10 @@ class KlsKinescopePlayerView(
     // ============================================================
     // EXTRA LIFECYCLE
     //
-    // bindLifecycle самого Kinescope отвечает за background
-    // playback / MediaSession.
+    // Сам background playback обрабатывает
+    // KinescopeVideoPlayer.bindLifecycle().
     //
-    // Этот observer нужен нам для восстановления PiP UI.
+    // Здесь только восстанавливаем UI после PiP.
     // ============================================================
 
     private val pipLifecycleObserver =
@@ -383,6 +773,7 @@ class KlsKinescopePlayerView(
                         .isInPictureInPictureMode
                 ) {
                     preparePictureInPictureUi()
+
                     updatePictureInPictureActions()
                 }
             }
@@ -395,9 +786,21 @@ class KlsKinescopePlayerView(
     init {
 
         // --------------------------------------------------------
-        // ЗАПРЕТ СКРИНШОТОВ / ЗАПИСИ
+        // FLUTTER CHANNELS
+        // --------------------------------------------------------
+
+        methodChannel.setMethodCallHandler(
+            methodHandler
+        )
+
+        eventChannel.setStreamHandler(
+            streamHandler
+        )
+
+        // --------------------------------------------------------
+        // SCREEN SECURITY
         //
-        // ОСТАВЛЯЕМ СУЩЕСТВУЮЩЕЕ ПОВЕДЕНИЕ.
+        // СТАРОЕ ПОВЕДЕНИЕ СОХРАНЯЕМ.
         // --------------------------------------------------------
 
         activity
@@ -439,7 +842,6 @@ class KlsKinescopePlayerView(
         if (
             pictureInPictureEnabled
         ) {
-
             playerView
                 .onPictureInPictureButtonCallback = {
                     enterPictureInPicture()
@@ -452,7 +854,7 @@ class KlsKinescopePlayerView(
         }
 
         // --------------------------------------------------------
-        // PLAYER STATE LISTENER
+        // PLAYER LISTENER
         // --------------------------------------------------------
 
         player.exoPlayer
@@ -461,7 +863,7 @@ class KlsKinescopePlayerView(
             )
 
         // --------------------------------------------------------
-        // PiP PLAY / PAUSE RECEIVER
+        // PiP REMOTE BUTTON
         // --------------------------------------------------------
 
         registerPictureInPictureReceiver()
@@ -476,7 +878,6 @@ class KlsKinescopePlayerView(
         if (
             lifecycleOwner != null
         ) {
-
             player.bindLifecycle(
                 lifecycle =
                     lifecycleOwner.lifecycle,
@@ -497,10 +898,9 @@ class KlsKinescopePlayerView(
                 backgroundPlaybackAllowed =
                     backgroundPlaybackEnabled,
 
-                // release() делаем сами в dispose().
-                // Так Flutter PlatformView полностью контролирует
-                // время жизни плеера.
-                releaseOnDestroy = false
+                // PlatformView сам release() делает в dispose().
+                releaseOnDestroy =
+                    false
             )
 
             lifecycleOwner
@@ -509,7 +909,8 @@ class KlsKinescopePlayerView(
                     pipLifecycleObserver
                 )
 
-            lifecycleBound = true
+            lifecycleBound =
+                true
         }
 
         // --------------------------------------------------------
@@ -519,9 +920,7 @@ class KlsKinescopePlayerView(
         if (
             videoId.isNotEmpty()
         ) {
-
             player.loadVideo(
-
                 videoId,
 
                 onSuccess = {
@@ -531,14 +930,11 @@ class KlsKinescopePlayerView(
                         "Video loaded: $videoId"
                     )
 
-                    // ------------------------------------------------
-                    // SurfaceView может появиться раньше,
-                    // чем Flutter завершит layout PlatformView.
+                    // SurfaceView может быть создан раньше,
+                    // чем Flutter завершит layout.
                     //
-                    // Сохраняем твою существующую защиту
-                    // от чёрного экрана.
-                    // ------------------------------------------------
-
+                    // Это твоя старая защита от чёрного экрана —
+                    // СОХРАНЯЕМ.
                     playerView.post {
 
                         playerView.requestLayout()
@@ -546,17 +942,33 @@ class KlsKinescopePlayerView(
                         playerView.invalidate()
 
                         updateAutoEnterPictureInPicture(
-                            isPlaying()
+                            player
+                                .playbackPlayer
+                                ?.playWhenReady
+                                == true
                         )
                     }
                 },
 
                 onFailed = { error ->
 
+                    val message =
+                        error
+                            ?.message
+                            ?.takeIf {
+                                it.isNotBlank()
+                            }
+                            ?: "Unable to load video"
+
                     Log.e(
                         TAG,
                         "Unable to load video: $videoId",
                         error
+                    )
+
+                    emitEvent(
+                        type = "error",
+                        message = message
                     )
                 }
             )
@@ -566,6 +978,11 @@ class KlsKinescopePlayerView(
             Log.e(
                 TAG,
                 "videoId is empty"
+            )
+
+            emitEvent(
+                type = "error",
+                message = "videoId is empty"
             )
         }
     }
@@ -578,9 +995,55 @@ class KlsKinescopePlayerView(
         playerView
 
     // ============================================================
-    // PUBLIC PLAYER CONTROL
+    // INITIAL POSITION
     //
-    // Эти методы понадобятся следующему слою Flutter.
+    // Возвращаем человека туда, где он остановился.
+    // ============================================================
+
+    private fun applyInitialPositionIfNeeded() {
+
+        if (
+            initialSeekApplied
+        ) {
+            return
+        }
+
+        initialSeekApplied =
+            true
+
+        if (
+            initialPositionMs <= 0L
+        ) {
+            return
+        }
+
+        val duration =
+            durationMs()
+
+        val target =
+            if (
+                duration > 0L
+            ) {
+                initialPositionMs.coerceIn(
+                    0L,
+                    duration
+                )
+            } else {
+                initialPositionMs
+            }
+
+        Log.d(
+            TAG,
+            "Restore position: $target ms"
+        )
+
+        player.seekToPosition(
+            target
+        )
+    }
+
+    // ============================================================
+    // PUBLIC PLAYER CONTROL
     // ============================================================
 
     fun play() {
@@ -608,10 +1071,29 @@ class KlsKinescopePlayerView(
             return
         }
 
+        val duration =
+            durationMs()
+
+        val target =
+            if (
+                duration > 0L
+            ) {
+                positionMs.coerceIn(
+                    0L,
+                    duration
+                )
+            } else {
+                positionMs.coerceAtLeast(
+                    0L
+                )
+            }
+
         player.seekToPosition(
-            positionMs.coerceAtLeast(
-                0L
-            )
+            target
+        )
+
+        emitEvent(
+            type = "position"
         )
     }
 
@@ -657,6 +1139,90 @@ class KlsKinescopePlayerView(
             .playbackPlayer
             ?.playbackState
             == Player.STATE_ENDED
+    }
+
+    // ============================================================
+    // EVENT PAYLOAD
+    //
+    // Kotlin → Flutter
+    // ============================================================
+
+    private fun buildEventPayload(
+        type: String,
+        message: String = ""
+    ): Map<String, Any?> {
+
+        val playbackPlayer =
+            player.playbackPlayer
+
+        return mapOf(
+            "type" to type,
+            "videoId" to videoId,
+            "positionMs" to currentPositionMs(),
+            "durationMs" to durationMs(),
+            "isPlaying" to isPlaying(),
+            "playWhenReady" to (
+                playbackPlayer
+                    ?.playWhenReady
+                    ?: false
+                ),
+            "playbackState" to (
+                playbackPlayer
+                    ?.playbackState
+                    ?: Player.STATE_IDLE
+                ),
+            "message" to message,
+            "timestampMs" to
+                System.currentTimeMillis()
+        )
+    }
+
+    private fun emitEvent(
+        type: String,
+        message: String = ""
+    ) {
+        if (disposed) {
+            return
+        }
+
+        val payload =
+            buildEventPayload(
+                type = type,
+                message = message
+            )
+
+        val send = {
+
+            if (
+                !disposed
+            ) {
+                try {
+                    eventSink
+                        ?.success(
+                            payload
+                        )
+                } catch (
+                    error: Throwable
+                ) {
+                    Log.w(
+                        TAG,
+                        "Unable to emit Flutter event: $type",
+                        error
+                    )
+                }
+            }
+        }
+
+        if (
+            Looper.myLooper() ==
+            Looper.getMainLooper()
+        ) {
+            send()
+        } else {
+            playerView.post(
+                send
+            )
+        }
     }
 
     // ============================================================
@@ -712,14 +1278,8 @@ class KlsKinescopePlayerView(
             return
         }
 
-        // --------------------------------------------------------
-        // Если человек был в нашем fullscreen Dialog,
-        // сначала аккуратно возвращаем player в inline view.
-        //
-        // Иначе Android может попытаться уменьшить Dialog,
-        // а не основную Activity.
-        // --------------------------------------------------------
-
+        // Если открыт наш fullscreen Dialog,
+        // сначала возвращаем Surface в Activity.
         if (
             isFullscreen
         ) {
@@ -728,10 +1288,7 @@ class KlsKinescopePlayerView(
 
         preparePictureInPictureUi()
 
-        // Если пользователь нажал PiP во время паузы,
-        // продолжаем воспроизведение.
-        //
-        // Так ведёт себя рекомендуемая PiP session Kinescope.
+        // При ручном входе в PiP продолжаем воспроизведение.
         if (
             !isPlaying()
         ) {
@@ -744,6 +1301,7 @@ class KlsKinescopePlayerView(
                 disposed
             ) {
                 restorePictureInPictureUi()
+
                 return@post
             }
 
@@ -757,6 +1315,7 @@ class KlsKinescopePlayerView(
                     disposed
                 ) {
                     restorePictureInPictureUi()
+
                     return@post
                 }
 
@@ -789,6 +1348,10 @@ class KlsKinescopePlayerView(
                             "Entered Picture-in-Picture"
                         )
 
+                        emitEvent(
+                            type = "pip_enter"
+                        )
+
                         updatePictureInPictureActions()
 
                     } else {
@@ -818,17 +1381,17 @@ class KlsKinescopePlayerView(
     }
 
     // ============================================================
-    // AUTO PiP
+    // AUTO PiP — ANDROID 12+
     //
-    // Android 12+ умеет автоматически переводить Activity
-    // в PiP при Home / swipe home.
+    // Если видео воспроизводится и человек жмёт Home /
+    // делает swipe Home — Android сможет перевести Activity
+    // в PiP автоматически.
     //
-    // На Android 8–11 автоматический Home → PiP
-    // закончим через ActivityPluginBinding в следующем файле.
+    // Для Android 8–11 потом отдельно подключим Activity callback.
     // ============================================================
 
     private fun updateAutoEnterPictureInPicture(
-        isPlaying: Boolean
+        shouldAutoEnter: Boolean
     ) {
         if (
             disposed ||
@@ -872,7 +1435,8 @@ class KlsKinescopePlayerView(
                         aspectRatio
                     )
                     .setAutoEnterEnabled(
-                        isPlaying
+                        shouldAutoEnter &&
+                            !isEnded()
                     )
                     .setSeamlessResizeEnabled(
                         true
@@ -904,7 +1468,8 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipUiPrepared = true
+        pipUiPrepared =
+            true
 
         try {
 
@@ -938,7 +1503,8 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipUiPrepared = false
+        pipUiPrepared =
+            false
 
         try {
 
@@ -1015,9 +1581,7 @@ class KlsKinescopePlayerView(
 
     private fun togglePlaybackFromPictureInPicture() {
 
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return
         }
 
@@ -1075,7 +1639,8 @@ class KlsKinescopePlayerView(
                 )
             }
 
-            pipReceiverRegistered = true
+            pipReceiverRegistered =
+                true
 
         } catch (
             error: Throwable
@@ -1097,7 +1662,8 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipReceiverRegistered = false
+        pipReceiverRegistered =
+            false
 
         try {
 
@@ -1119,6 +1685,8 @@ class KlsKinescopePlayerView(
 
     // ============================================================
     // FULLSCREEN
+    //
+    // ТВОЮ СУЩЕСТВУЮЩУЮ РЕАЛИЗАЦИЮ СОХРАНЯЕМ.
     // ============================================================
 
     private fun enterFullscreen() {
@@ -1146,7 +1714,8 @@ class KlsKinescopePlayerView(
             return
         }
 
-        isFullscreen = true
+        isFullscreen =
+            true
 
         val dialog =
             Dialog(
@@ -1469,8 +2038,44 @@ class KlsKinescopePlayerView(
             return
         }
 
+        // Сохраняем последнее состояние в логах.
+        Log.d(
+            TAG,
+            "dispose " +
+                "position=${currentPositionMs()} " +
+                "duration=${durationMs()} " +
+                "playing=${isPlaying()}"
+        )
+
+        // Flutter-событие пытаемся отправить ДО disposed=true.
+        //
+        // На него как на единственный механизм сохранения
+        // полагаться не будем — родительский Flutter widget
+        // тоже сам спросит controller.getPosition()
+        // перед закрытием страницы.
+        emitEvent(
+            type = "dispose"
+        )
+
         disposed =
             true
+
+        // --------------------------------------------------------
+        // CHANNELS
+        // --------------------------------------------------------
+
+        methodChannel
+            .setMethodCallHandler(
+                null
+            )
+
+        eventChannel
+            .setStreamHandler(
+                null
+            )
+
+        eventSink =
+            null
 
         // --------------------------------------------------------
         // PiP
@@ -1601,7 +2206,7 @@ class KlsKinescopePlayerView(
         // --------------------------------------------------------
         // FLAG SECURE
         //
-        // Сохраняем прежнюю логику.
+        // Старое поведение сохраняем.
         // --------------------------------------------------------
 
         activity
@@ -1627,6 +2232,36 @@ private fun Map<*, *>.booleanValue(
     return this[key]
         as? Boolean
         ?: fallback
+}
+
+
+private fun Map<*, *>.longValue(
+    key: String,
+    fallback: Long
+): Long {
+
+    val value =
+        this[key]
+
+    return when (value) {
+
+        is Long ->
+            value
+
+        is Int ->
+            value.toLong()
+
+        is Number ->
+            value.toLong()
+
+        is String ->
+            value
+                .toLongOrNull()
+                ?: fallback
+
+        else ->
+            fallback
+    }
 }
 
 
