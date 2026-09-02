@@ -26,7 +26,9 @@ class KlsKinescopePlayerFactory(
 
         return KlsKinescopePlayerView(
             context = context,
-            params = params
+            params = params,
+            messenger = messenger,
+            viewId = viewId
         )
     }
 }
