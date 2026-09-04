@@ -2,15 +2,21 @@ package ru.kls.kinescope_android_player
 
 import android.app.Activity
 import android.app.Dialog
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
+import android.app.RemoteAction
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.drawable.Icon
 import android.os.Build
+import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
@@ -19,6 +25,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.media3.common.Player
 
@@ -33,7 +40,6 @@ import io.kinescope.sdk.player.KinescopePictureInPicture
 import io.kinescope.sdk.player.KinescopePlayerOptions
 import io.kinescope.sdk.player.KinescopeVideoPlayer
 import io.kinescope.sdk.view.KinescopePlayerView
-
 
 class KlsKinescopePlayerView(
     context: Context,
@@ -61,6 +67,19 @@ class KlsKinescopePlayerView(
 
     private val activity: Activity? =
         context.findActivity()
+
+    private val platformViewId: Int =
+        viewId
+
+    private val mainHandler =
+        Handler(
+            Looper.getMainLooper()
+        )
+
+    private val pipCloseAction =
+        "${appContext.packageName}." +
+            "kls_kinescope_android_player." +
+            "PIP_CLOSE.$platformViewId"
 
     // ============================================================
     // FLUTTER CHANNELS
@@ -213,6 +232,33 @@ class KlsKinescopePlayerView(
         }
 
     // ============================================================
+    // PiP PLAYER VIEW
+    //
+    // Отдельный native KinescopePlayerView.
+    //
+    // В PiP Android уменьшает ВСЮ Activity.
+    // Поэтому на время PiP мы кладём этот View поверх Flutter.
+    // В маленьком окне остаётся только видео.
+    // ============================================================
+
+    private val pipPlayerView =
+        KinescopePlayerView(
+            context,
+            useTextureSurface = false
+        ).apply {
+
+            setBackgroundColor(
+                Color.BLACK
+            )
+
+            layoutParams =
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+        }
+
+    // ============================================================
     // PLAYER
     // ============================================================
 
@@ -242,6 +288,18 @@ class KlsKinescopePlayerView(
         false
 
     private var pipUiPrepared =
+        false
+
+    private var pipSessionActive =
+        false
+
+    private var pipOverlayRoot: FrameLayout? =
+        null
+
+    private var pipPlayerOnOverlay =
+        false
+
+    private var pipExitCheckScheduled =
         false
 
     private var playerReady =
@@ -585,7 +643,7 @@ class KlsKinescopePlayerView(
         }
 
     // ============================================================
-    // PiP REMOTE PLAY / PAUSE
+    // PiP REMOTE ACTIONS
     // ============================================================
 
     private val pipReceiver =
@@ -595,15 +653,21 @@ class KlsKinescopePlayerView(
                 context: Context?,
                 intent: Intent?
             ) {
-                if (
-                    intent?.action !=
-                    KinescopePictureInPicture
-                        .ACTION_PLAY_PAUSE
+                when (
+                    intent?.action
                 ) {
-                    return
-                }
 
-                togglePlaybackFromPictureInPicture()
+                    KinescopePictureInPicture
+                        .ACTION_PLAY_PAUSE -> {
+
+                        togglePlaybackFromPictureInPicture()
+                    }
+
+                    pipCloseAction -> {
+
+                        closePictureInPictureFromSystem()
+                    }
+                }
             }
         }
 
@@ -621,25 +685,49 @@ class KlsKinescopePlayerView(
                     return
                 }
 
-                val hostActivity =
-                    activity
-                        ?: return
-
-                val currentlyInPip =
-                    if (
-                        Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.N
-                    ) {
-                        hostActivity.isInPictureInPictureMode
-                    } else {
-                        false
-                    }
-
                 if (
-                    !currentlyInPip
+                    !isActivityInPictureInPicture()
                 ) {
-                    restorePictureInPictureUi()
+                    /*
+                     * Пользователь нажал на PiP
+                     * и вернулся обратно в приложение.
+                     *
+                     * Видео НЕ останавливаем.
+                     * Только возвращаем Surface
+                     * на обычный Flutter-плеер.
+                     */
+                    restorePictureInPicturePresentation()
                 }
+            }
+
+            override fun onPause(
+                owner: LifecycleOwner
+            ) {
+                if (disposed) {
+                    return
+                }
+
+                /*
+                 * Android 12+ может сам войти в PiP
+                 * из-за setAutoEnterEnabled(true).
+                 *
+                 * enterPictureInPicture() при свайпе Home
+                 * в таком случае не вызывается.
+                 *
+                 * Поэтому после onPause проверяем,
+                 * стал ли Activity PiP.
+                 */
+                mainHandler.postDelayed(
+                    {
+                        if (
+                            !disposed &&
+                            isActivityInPictureInPicture()
+                        ) {
+                            ensurePictureInPicturePresentation()
+                        }
+                    },
+                    80L
+                )
             }
 
             override fun onStop(
@@ -649,20 +737,30 @@ class KlsKinescopePlayerView(
                     return
                 }
 
-                val hostActivity =
-                    activity
-                        ?: return
-
-                val currentlyInPip =
-                    Build.VERSION.SDK_INT >=
-                        Build.VERSION_CODES.N &&
-                        hostActivity.isInPictureInPictureMode
-
                 if (
-                    currentlyInPip
+                    isActivityInPictureInPicture()
                 ) {
-                    preparePictureInPictureUi()
-                    updatePictureInPictureActions()
+
+                    ensurePictureInPicturePresentation()
+
+                    return
+                }
+
+                /*
+                 * PiP был активен,
+                 * но теперь исчез.
+                 *
+                 * Это может быть:
+                 * - возврат в приложение;
+                 * - системный X;
+                 * - блокировка телефона.
+                 *
+                 * Разбираемся с небольшой задержкой.
+                 */
+                if (
+                    pipSessionActive
+                ) {
+                    schedulePictureInPictureExitCheck()
                 }
             }
         }
@@ -734,14 +832,15 @@ class KlsKinescopePlayerView(
                 .onPictureInPictureButtonCallback = {
                     enterPictureInPicture()
                 }
+
+            pipPlayerView
+                .onPictureInPictureButtonCallback = {
+                    // Уже находимся в PiP presentation.
+                }
         }
 
         // --------------------------------------------------------
         // PLAYER LISTENER
-        //
-        // playbackPlayer = Media3 Player.
-        // Для наших событий этого достаточно и это также
-        // корректно при возможном переключении активного player.
         // --------------------------------------------------------
 
         player.playbackPlayer
@@ -1102,6 +1201,691 @@ class KlsKinescopePlayerView(
     }
 
     // ============================================================
+    // PiP PRESENTATION
+    //
+    // Android уменьшает всю Activity.
+    //
+    // Поэтому при PiP создаём native overlay поверх Flutter
+    // и переносим туда именно Kinescope video surface.
+    // ============================================================
+
+    private fun isActivityInPictureInPicture(): Boolean {
+
+        val hostActivity =
+            activity
+                ?: return false
+
+        return Build.VERSION.SDK_INT >=
+            Build.VERSION_CODES.N &&
+            hostActivity.isInPictureInPictureMode
+    }
+
+    private fun ensurePictureInPicturePresentation() {
+
+        if (
+            disposed
+        ) {
+            return
+        }
+
+        pipSessionActive =
+            true
+
+        showPictureInPictureVideoOverlay()
+
+        preparePictureInPictureUi()
+
+        updatePictureInPictureActions()
+
+        applyPictureInPictureCloseAction()
+
+        startPictureInPictureMonitor()
+    }
+
+    private fun showPictureInPictureVideoOverlay(): Boolean {
+
+        if (
+            disposed
+        ) {
+            return false
+        }
+
+        if (
+            pipPlayerOnOverlay &&
+            pipOverlayRoot != null
+        ) {
+            return true
+        }
+
+        val hostActivity =
+            activity
+                ?: return false
+
+        /*
+         * Если PiP запустился из fullscreen,
+         * сначала спокойно возвращаемся к inline.
+         */
+        if (
+            isFullscreen
+        ) {
+            exitFullscreen()
+        }
+
+        val activityContent =
+            hostActivity.findViewById<ViewGroup>(
+                android.R.id.content
+            )
+                ?: return false
+
+        val overlay =
+            FrameLayout(
+                hostActivity
+            ).apply {
+
+                setBackgroundColor(
+                    Color.BLACK
+                )
+
+                isClickable =
+                    true
+
+                isFocusable =
+                    true
+
+                elevation =
+                    10000f
+
+                layoutParams =
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+            }
+
+        try {
+
+            (
+                pipPlayerView.parent
+                    as? ViewGroup
+                )
+                ?.removeView(
+                    pipPlayerView
+                )
+
+            overlay.addView(
+                pipPlayerView,
+                FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+
+            activityContent.addView(
+                overlay,
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+
+            overlay.bringToFront()
+
+            /*
+             * Реальный видеоплеер переключается
+             * с Flutter PlatformView на PiP PlayerView.
+             */
+            KinescopePlayerView
+                .switchTargetView(
+                    playerView,
+                    pipPlayerView,
+                    player
+                )
+
+            pipPlayerView
+                .applyTemplateOptions()
+
+            pipPlayerView
+                .prepareForPictureInPicture(
+                    true
+                )
+
+            pipPlayerView
+                .requestLayout()
+
+            pipPlayerView
+                .invalidate()
+
+            overlay.requestLayout()
+
+            overlay.invalidate()
+
+            pipOverlayRoot =
+                overlay
+
+            pipPlayerOnOverlay =
+                true
+
+            Log.d(
+                TAG,
+                "PiP video overlay attached"
+            )
+
+            return true
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.e(
+                TAG,
+                "Unable to attach PiP video overlay",
+                error
+            )
+
+            try {
+
+                (
+                    pipPlayerView.parent
+                        as? ViewGroup
+                    )
+                    ?.removeView(
+                        pipPlayerView
+                    )
+
+                (
+                    overlay.parent
+                        as? ViewGroup
+                    )
+                    ?.removeView(
+                        overlay
+                    )
+
+            } catch (
+                cleanupError: Throwable
+            ) {
+
+                Log.w(
+                    TAG,
+                    "PiP overlay cleanup failed",
+                    cleanupError
+                )
+            }
+
+            pipOverlayRoot =
+                null
+
+            pipPlayerOnOverlay =
+                false
+
+            return false
+        }
+    }
+
+    private fun restorePictureInPicturePresentation() {
+
+        stopPictureInPictureMonitor()
+
+        pipSessionActive =
+            false
+
+        pipExitCheckScheduled =
+            false
+
+        if (
+            pipPlayerOnOverlay
+        ) {
+
+            try {
+
+                KinescopePlayerView
+                    .switchTargetView(
+                        pipPlayerView,
+                        playerView,
+                        player
+                    )
+
+                playerView
+                    .applyTemplateOptions()
+
+                playerView
+                    .requestLayout()
+
+                playerView
+                    .invalidate()
+
+            } catch (
+                error: Throwable
+            ) {
+
+                Log.w(
+                    TAG,
+                    "Unable to restore inline player after PiP",
+                    error
+                )
+            }
+        }
+
+        try {
+
+            (
+                pipPlayerView.parent
+                    as? ViewGroup
+                )
+                ?.removeView(
+                    pipPlayerView
+                )
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.w(
+                TAG,
+                "Unable to detach PiP player view",
+                error
+            )
+        }
+
+        try {
+
+            (
+                pipOverlayRoot?.parent
+                    as? ViewGroup
+                )
+                ?.removeView(
+                    pipOverlayRoot
+                )
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.w(
+                TAG,
+                "Unable to remove PiP overlay",
+                error
+            )
+        }
+
+        pipOverlayRoot =
+            null
+
+        pipPlayerOnOverlay =
+            false
+
+        restorePictureInPictureUi()
+    }
+
+    // ============================================================
+    // PiP EXIT MONITOR
+    //
+    // Нужен прежде всего для Android 8–12,
+    // где отдельного системного closeAction ещё нет.
+    // ============================================================
+
+    private val pictureInPictureMonitorRunnable =
+        object : Runnable {
+
+            override fun run() {
+
+                monitorPictureInPictureState()
+            }
+        }
+
+    private fun startPictureInPictureMonitor() {
+
+        mainHandler.removeCallbacks(
+            pictureInPictureMonitorRunnable
+        )
+
+        if (
+            disposed ||
+            !pipSessionActive
+        ) {
+            return
+        }
+
+        mainHandler.postDelayed(
+            pictureInPictureMonitorRunnable,
+            250L
+        )
+    }
+
+    private fun stopPictureInPictureMonitor() {
+
+        mainHandler.removeCallbacks(
+            pictureInPictureMonitorRunnable
+        )
+    }
+
+    private fun monitorPictureInPictureState() {
+
+        if (
+            disposed ||
+            !pipSessionActive
+        ) {
+            return
+        }
+
+        if (
+            isActivityInPictureInPicture()
+        ) {
+
+            mainHandler.postDelayed(
+                pictureInPictureMonitorRunnable,
+                250L
+            )
+
+            return
+        }
+
+        schedulePictureInPictureExitCheck()
+    }
+
+    private fun schedulePictureInPictureExitCheck() {
+
+        if (
+            disposed ||
+            !pipSessionActive ||
+            pipExitCheckScheduled
+        ) {
+            return
+        }
+
+        pipExitCheckScheduled =
+            true
+
+        mainHandler.postDelayed(
+            {
+
+                pipExitCheckScheduled =
+                    false
+
+                resolvePictureInPictureExit()
+
+            },
+            350L
+        )
+    }
+
+    private fun resolvePictureInPictureExit() {
+
+        if (
+            disposed ||
+            !pipSessionActive
+        ) {
+            return
+        }
+
+        /*
+         * PiP снова активен —
+         * это был только переходный момент.
+         */
+        if (
+            isActivityInPictureInPicture()
+        ) {
+
+            startPictureInPictureMonitor()
+
+            return
+        }
+
+        val lifecycleOwner =
+            activity as? LifecycleOwner
+
+        val activityVisible =
+            lifecycleOwner
+                ?.lifecycle
+                ?.currentState
+                ?.isAtLeast(
+                    Lifecycle.State.STARTED
+                )
+                == true
+
+        /*
+         * Пользователь нажал на маленькое окно
+         * и вернулся в приложение.
+         *
+         * Видео продолжает играть.
+         */
+        if (
+            activityVisible
+        ) {
+
+            restorePictureInPicturePresentation()
+
+            return
+        }
+
+        /*
+         * Экран телефона заблокирован.
+         *
+         * Это НЕ закрытие видео.
+         * Background playback сохраняем.
+         */
+        if (
+            !isScreenInteractive()
+        ) {
+
+            restorePictureInPicturePresentation()
+
+            return
+        }
+
+        /*
+         * Activity находится в фоне,
+         * экран включён,
+         * PiP исчез.
+         *
+         * На Android до 13 это наш fallback
+         * для системного X.
+         */
+        Log.d(
+            TAG,
+            "PiP window closed while app remains in background"
+        )
+
+        if (
+            !isEnded()
+        ) {
+            player.pause()
+        }
+
+        restorePictureInPicturePresentation()
+    }
+
+    private fun isScreenInteractive(): Boolean {
+
+        return try {
+
+            val powerManager =
+                appContext.getSystemService(
+                    Context.POWER_SERVICE
+                ) as? PowerManager
+
+            powerManager
+                ?.isInteractive
+                ?: true
+
+        } catch (
+            error: Throwable
+        ) {
+
+            true
+        }
+    }
+
+    // ============================================================
+    // ANDROID 13+ SYSTEM CLOSE ACTION
+    // ============================================================
+
+    private fun createPictureInPictureCloseRemoteAction(): RemoteAction? {
+
+        if (
+            Build.VERSION.SDK_INT <
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+            return null
+        }
+
+        return try {
+
+            val closeIntent =
+                Intent(
+                    pipCloseAction
+                ).apply {
+
+                    setPackage(
+                        appContext.packageName
+                    )
+                }
+
+            val flags =
+                PendingIntent.FLAG_UPDATE_CURRENT or
+                    PendingIntent.FLAG_IMMUTABLE
+
+            val pendingIntent =
+                PendingIntent.getBroadcast(
+                    appContext,
+                    platformViewId,
+                    closeIntent,
+                    flags
+                )
+
+            RemoteAction(
+                Icon.createWithResource(
+                    appContext,
+                    android.R.drawable
+                        .ic_menu_close_clear_cancel
+                ),
+                "Закрыть видео",
+                "Закрыть видео",
+                pendingIntent
+            )
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.w(
+                TAG,
+                "Unable to create PiP close action",
+                error
+            )
+
+            null
+        }
+    }
+
+    private fun applyPictureInPictureCloseAction() {
+
+        if (
+            disposed ||
+            Build.VERSION.SDK_INT <
+            Build.VERSION_CODES.TIRAMISU
+        ) {
+            return
+        }
+
+        val hostActivity =
+            activity
+                ?: return
+
+        val closeAction =
+            createPictureInPictureCloseRemoteAction()
+                ?: return
+
+        try {
+
+            /*
+             * Сохраняем параметры, которые уже установил Kinescope,
+             * включая Play/Pause actions.
+             */
+            val params =
+                PictureInPictureParams
+                    .Builder(
+                        hostActivity.pictureInPictureParams
+                    )
+                    .setCloseAction(
+                        closeAction
+                    )
+                    .build()
+
+            hostActivity
+                .setPictureInPictureParams(
+                    params
+                )
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.w(
+                TAG,
+                "Unable to apply PiP close action",
+                error
+            )
+        }
+    }
+
+    private fun closePictureInPictureFromSystem() {
+
+        if (
+            disposed
+        ) {
+            return
+        }
+
+        Log.d(
+            TAG,
+            "System PiP close requested"
+        )
+
+        /*
+         * Сначала настоящая PAUSE.
+         *
+         * Player.Listener отправит Flutter event "pause",
+         * поэтому общий KLS player сможет сохранить
+         * текущую позицию просмотра.
+         */
+        if (
+            !isEnded()
+        ) {
+            player.pause()
+        }
+
+        stopPictureInPictureMonitor()
+
+        /*
+         * Даём Flutter короткий момент получить pause event,
+         * после чего Android 13+ закрывает PiP Activity.
+         */
+        mainHandler.postDelayed(
+            {
+                if (
+                    !disposed
+                ) {
+                    try {
+
+                        activity?.finish()
+
+                    } catch (
+                        error: Throwable
+                    ) {
+
+                        Log.w(
+                            TAG,
+                            "Unable to finish Activity after PiP close",
+                            error
+                        )
+                    }
+                }
+            },
+            150L
+        )
+    }
+
+    // ============================================================
     // PICTURE IN PICTURE
     // ============================================================
 
@@ -1160,8 +1944,17 @@ class KlsKinescopePlayerView(
         if (
             isFullscreen
         ) {
-            restoreInlinePlayer()
+            exitFullscreen()
         }
+
+        /*
+         * Сначала накрываем Flutter Activity
+         * отдельным native video view.
+         *
+         * Поэтому Android уменьшает страницу,
+         * на которой визуально находится только видео.
+         */
+        showPictureInPictureVideoOverlay()
 
         preparePictureInPictureUi()
 
@@ -1171,19 +1964,28 @@ class KlsKinescopePlayerView(
             player.play()
         }
 
-        playerView.post {
+        val pipView =
+            if (
+                pipPlayerOnOverlay
+            ) {
+                pipPlayerView
+            } else {
+                playerView
+            }
+
+        pipView.post {
 
             if (
                 disposed
             ) {
 
-                restorePictureInPictureUi()
+                restorePictureInPicturePresentation()
 
                 return@post
             }
 
             val anchorView =
-                playerView
+                pipView
                     .getPipAnchorView()
 
             anchorView.post {
@@ -1192,7 +1994,7 @@ class KlsKinescopePlayerView(
                     disposed
                 ) {
 
-                    restorePictureInPictureUi()
+                    restorePictureInPicturePresentation()
 
                     return@post
                 }
@@ -1227,11 +2029,18 @@ class KlsKinescopePlayerView(
                             "Entered Picture-in-Picture"
                         )
 
+                        pipSessionActive =
+                            true
+
                         emitEvent(
                             type = "pip_enter"
                         )
 
                         updatePictureInPictureActions()
+
+                        applyPictureInPictureCloseAction()
+
+                        startPictureInPictureMonitor()
 
                     } else {
 
@@ -1240,7 +2049,7 @@ class KlsKinescopePlayerView(
                             "Unable to enter Picture-in-Picture"
                         )
 
-                        restorePictureInPictureUi()
+                        restorePictureInPicturePresentation()
                     }
 
                 } catch (
@@ -1253,7 +2062,7 @@ class KlsKinescopePlayerView(
                         error
                     )
 
-                    restorePictureInPictureUi()
+                    restorePictureInPicturePresentation()
                 }
             }
         }
@@ -1301,7 +2110,7 @@ class KlsKinescopePlayerView(
                         player.exoPlayer
                     )
 
-            val pipParams =
+            val builder =
                 PictureInPictureParams
                     .Builder()
                     .setAspectRatio(
@@ -1314,11 +2123,61 @@ class KlsKinescopePlayerView(
                     .setSeamlessResizeEnabled(
                         true
                     )
-                    .build()
+
+            /*
+             * Android начинает анимацию PiP
+             * от области самого видео,
+             * а не от всей Flutter страницы.
+             */
+            try {
+
+                val anchorView =
+                    playerView
+                        .getPipAnchorView()
+
+                val sourceRect =
+                    Rect()
+
+                if (
+                    anchorView.getGlobalVisibleRect(
+                        sourceRect
+                    ) &&
+                    !sourceRect.isEmpty
+                ) {
+
+                    builder.setSourceRectHint(
+                        sourceRect
+                    )
+                }
+
+            } catch (
+                error: Throwable
+            ) {
+
+                Log.w(
+                    TAG,
+                    "Unable to set PiP source rect",
+                    error
+                )
+            }
+
+            if (
+                Build.VERSION.SDK_INT >=
+                Build.VERSION_CODES.TIRAMISU
+            ) {
+
+                createPictureInPictureCloseRemoteAction()
+                    ?.let { closeAction ->
+
+                        builder.setCloseAction(
+                            closeAction
+                        )
+                    }
+            }
 
             hostActivity
                 .setPictureInPictureParams(
-                    pipParams
+                    builder.build()
                 )
 
         } catch (
@@ -1332,6 +2191,10 @@ class KlsKinescopePlayerView(
             )
         }
     }
+
+    // ============================================================
+    // PiP UI
+    // ============================================================
 
     private fun preparePictureInPictureUi() {
 
@@ -1352,6 +2215,11 @@ class KlsKinescopePlayerView(
                 )
 
             fullscreenPlayerView
+                .prepareForPictureInPicture(
+                    true
+                )
+
+            pipPlayerView
                 .prepareForPictureInPicture(
                     true
                 )
@@ -1397,6 +2265,14 @@ class KlsKinescopePlayerView(
             fullscreenPlayerView
                 .refreshPlayerChromeAfterPictureInPictureExit()
 
+            pipPlayerView
+                .prepareForPictureInPicture(
+                    false
+                )
+
+            pipPlayerView
+                .refreshPlayerChromeAfterPictureInPictureExit()
+
         } catch (
             error: Throwable
         ) {
@@ -1439,6 +2315,12 @@ class KlsKinescopePlayerView(
                     hostActivity,
                     player.exoPlayer
                 )
+
+            /*
+             * Kinescope обновил Play/Pause actions.
+             * После этого снова ставим собственный X.
+             */
+            applyPictureInPictureCloseAction()
 
         } catch (
             error: Throwable
@@ -1487,10 +2369,17 @@ class KlsKinescopePlayerView(
         try {
 
             val filter =
-                IntentFilter(
-                    KinescopePictureInPicture
-                        .ACTION_PLAY_PAUSE
-                )
+                IntentFilter().apply {
+
+                    addAction(
+                        KinescopePictureInPicture
+                            .ACTION_PLAY_PAUSE
+                    )
+
+                    addAction(
+                        pipCloseAction
+                    )
+                }
 
             if (
                 Build.VERSION.SDK_INT >=
@@ -1583,6 +2472,16 @@ class KlsKinescopePlayerView(
             )
 
             return
+        }
+
+        /*
+         * На всякий случай PiP presentation
+         * перед fullscreen должен быть восстановлен.
+         */
+        if (
+            pipPlayerOnOverlay
+        ) {
+            restorePictureInPicturePresentation()
         }
 
         isFullscreen =
@@ -1919,6 +2818,18 @@ class KlsKinescopePlayerView(
             type = "dispose"
         )
 
+        // --------------------------------------------------------
+        // PiP presentation cleanup
+        // --------------------------------------------------------
+
+        stopPictureInPictureMonitor()
+
+        restorePictureInPicturePresentation()
+
+        mainHandler.removeCallbacksAndMessages(
+            null
+        )
+
         disposed =
             true
 
@@ -1940,7 +2851,7 @@ class KlsKinescopePlayerView(
             null
 
         // --------------------------------------------------------
-        // PiP
+        // PiP RECEIVER
         // --------------------------------------------------------
 
         unregisterPictureInPictureReceiver()
@@ -2028,6 +2939,31 @@ class KlsKinescopePlayerView(
         }
 
         // --------------------------------------------------------
+        // REMOVE PiP VIEW
+        // --------------------------------------------------------
+
+        try {
+
+            (
+                pipPlayerView.parent
+                    as? ViewGroup
+                )
+                ?.removeView(
+                    pipPlayerView
+                )
+
+        } catch (
+            error: Throwable
+        ) {
+
+            Log.w(
+                TAG,
+                "PiP player cleanup failed",
+                error
+            )
+        }
+
+        // --------------------------------------------------------
         // LIFECYCLE
         // --------------------------------------------------------
 
@@ -2087,7 +3023,6 @@ class KlsKinescopePlayerView(
     }
 }
 
-
 // ============================================================
 // PARAM HELPERS
 // ============================================================
@@ -2101,7 +3036,6 @@ private fun Map<*, *>.booleanValue(
         as? Boolean
         ?: fallback
 }
-
 
 private fun Map<*, *>.longValue(
     key: String,
@@ -2131,7 +3065,6 @@ private fun Map<*, *>.longValue(
             fallback
     }
 }
-
 
 // ============================================================
 // ACTIVITY LOOKUP
