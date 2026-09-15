@@ -62,19 +62,13 @@ class KlsKinescopePlayerView(
     // CONTEXT / ACTIVITY
     // ============================================================
 
-    private val appContext: Context =
-        context.applicationContext
+    private val appContext: Context = context.applicationContext
 
-    private val activity: Activity? =
-        context.findActivity()
+    private val activity: Activity? = context.findActivity()
 
-    private val platformViewId: Int =
-        viewId
+    private val platformViewId: Int = viewId
 
-    private val mainHandler =
-        Handler(
-            Looper.getMainLooper()
-        )
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val pipCloseAction =
         "${appContext.packageName}." +
@@ -97,8 +91,7 @@ class KlsKinescopePlayerView(
             "$EVENT_CHANNEL_PREFIX/$viewId"
         )
 
-    private var eventSink: EventChannel.EventSink? =
-        null
+    private var eventSink: EventChannel.EventSink? = null
 
     // ============================================================
     // INPUT PARAMS
@@ -168,20 +161,15 @@ class KlsKinescopePlayerView(
 
             playsinline = true
 
-            fullscreen =
-                fullscreenEnabled
+            fullscreen = fullscreenEnabled
 
-            pictureInPicture =
-                pictureInPictureEnabled
+            pictureInPicture = pictureInPictureEnabled
 
-            backgroundPlaybackAllowed =
-                backgroundPlaybackEnabled
+            backgroundPlaybackAllowed = backgroundPlaybackEnabled
 
             accentColor =
                 (params["accentColor"] as? String)
-                    ?.takeIf {
-                        it.isNotBlank()
-                    }
+                    ?.takeIf { it.isNotBlank() }
                     ?: "#E9C18A"
 
             syncLegacyChromeFlags()
@@ -197,9 +185,7 @@ class KlsKinescopePlayerView(
             useTextureSurface = false
         ).apply {
 
-            setBackgroundColor(
-                Color.BLACK
-            )
+            setBackgroundColor(Color.BLACK)
 
             layoutParams =
                 ViewGroup.LayoutParams(
@@ -218,9 +204,7 @@ class KlsKinescopePlayerView(
             useTextureSurface = false
         ).apply {
 
-            setBackgroundColor(
-                Color.BLACK
-            )
+            setBackgroundColor(Color.BLACK)
 
             layoutParams =
                 FrameLayout.LayoutParams(
@@ -231,6 +215,11 @@ class KlsKinescopePlayerView(
 
     // ============================================================
     // PiP PLAYER VIEW
+    //
+    // Это отдельный native KinescopePlayerView.
+    //
+    // Именно он нужен для того, чтобы в Android PiP было
+    // реальное видео, а не просто уменьшенная Flutter Activity.
     // ============================================================
 
     private val pipPlayerView =
@@ -239,9 +228,7 @@ class KlsKinescopePlayerView(
             useTextureSurface = false
         ).apply {
 
-            setBackgroundColor(
-                Color.BLACK
-            )
+            setBackgroundColor(Color.BLACK)
 
             layoutParams =
                 FrameLayout.LayoutParams(
@@ -264,50 +251,36 @@ class KlsKinescopePlayerView(
     // STATE
     // ============================================================
 
-    private var lifecycleBound =
-        false
+    private var lifecycleBound = false
 
-    private var fullscreenDialog: Dialog? =
-        null
+    private var fullscreenDialog: Dialog? = null
 
-    private var isFullscreen =
-        false
+    private var isFullscreen = false
 
-    private var disposed =
-        false
+    private var disposed = false
 
-    private var pipReceiverRegistered =
-        false
+    private var pipReceiverRegistered = false
 
-    private var pipUiPrepared =
-        false
+    private var pipUiPrepared = false
 
-    private var pipSessionActive =
-        false
+    private var pipSessionActive = false
 
-    private var pipOverlayRoot: FrameLayout? =
-        null
+    private var pipOverlayRoot: FrameLayout? = null
 
-    private var pipPlayerOnOverlay =
-        false
+    private var pipPlayerOnOverlay = false
 
-    private var pipExitCheckScheduled =
-        false
+    private var pipExitCheckScheduled = false
 
-    private var playerReady =
-        false
+    private var playerReady = false
 
     private var initialSeekApplied =
         initialPositionMs <= 0L
 
-    private var lastPlayWhenReady: Boolean? =
-        null
+    private var lastPlayWhenReady: Boolean? = null
 
-    private var hasStartedPlayback =
-        false
+    private var hasStartedPlayback = false
 
-    private var endedEventSent =
-        false
+    private var endedEventSent = false
 
     // ============================================================
     // EVENT CHANNEL
@@ -320,8 +293,8 @@ class KlsKinescopePlayerView(
                 arguments: Any?,
                 events: EventChannel.EventSink?
             ) {
-                eventSink =
-                    events
+
+                eventSink = events
 
                 if (
                     playerReady &&
@@ -336,8 +309,8 @@ class KlsKinescopePlayerView(
             override fun onCancel(
                 arguments: Any?
             ) {
-                eventSink =
-                    null
+
+                eventSink = null
             }
         }
 
@@ -351,6 +324,7 @@ class KlsKinescopePlayerView(
                 result: MethodChannel.Result ->
 
             if (disposed) {
+
                 result.error(
                     "PLAYER_DISPOSED",
                     "Kinescope player is already disposed",
@@ -363,12 +337,16 @@ class KlsKinescopePlayerView(
             when (call.method) {
 
                 "play" -> {
+
                     play()
+
                     result.success(null)
                 }
 
                 "pause" -> {
+
                     pause()
+
                     result.success(null)
                 }
 
@@ -388,41 +366,46 @@ class KlsKinescopePlayerView(
                         positionMs
                     )
 
-                    result.success(
-                        null
-                    )
+                    result.success(null)
                 }
 
                 "getPositionMs" -> {
+
                     result.success(
                         currentPositionMs()
                     )
                 }
 
                 "getDurationMs" -> {
+
                     result.success(
                         durationMs()
                     )
                 }
 
                 "isPlaying" -> {
+
                     result.success(
                         isPlaying()
                     )
                 }
 
                 "isEnded" -> {
+
                     result.success(
                         isEnded()
                     )
                 }
 
                 "enterPictureInPicture" -> {
+
                     enterPictureInPicture()
+
                     result.success(null)
                 }
 
                 "getState" -> {
+
                     result.success(
                         buildEventPayload(
                             type = "state"
@@ -431,6 +414,7 @@ class KlsKinescopePlayerView(
                 }
 
                 else -> {
+
                     result.notImplemented()
                 }
             }
@@ -447,6 +431,7 @@ class KlsKinescopePlayerView(
                 playWhenReady: Boolean,
                 reason: Int
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -457,16 +442,13 @@ class KlsKinescopePlayerView(
                 lastPlayWhenReady =
                     playWhenReady
 
-                if (
-                    previous == null
-                ) {
+                if (previous == null) {
 
                     if (playWhenReady) {
-                        hasStartedPlayback =
-                            true
 
-                        endedEventSent =
-                            false
+                        hasStartedPlayback = true
+
+                        endedEventSent = false
 
                         emitEvent(
                             type = "play"
@@ -488,11 +470,9 @@ class KlsKinescopePlayerView(
 
                 if (playWhenReady) {
 
-                    hasStartedPlayback =
-                        true
+                    hasStartedPlayback = true
 
-                    endedEventSent =
-                        false
+                    endedEventSent = false
 
                     emitEvent(
                         type = "play"
@@ -504,6 +484,7 @@ class KlsKinescopePlayerView(
                         hasStartedPlayback &&
                         !isEnded()
                     ) {
+
                         emitEvent(
                             type = "pause"
                         )
@@ -518,6 +499,7 @@ class KlsKinescopePlayerView(
             override fun onIsPlayingChanged(
                 isPlaying: Boolean
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -535,6 +517,7 @@ class KlsKinescopePlayerView(
             override fun onPlaybackStateChanged(
                 playbackState: Int
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -543,11 +526,9 @@ class KlsKinescopePlayerView(
 
                     Player.STATE_READY -> {
 
-                        playerReady =
-                            true
+                        playerReady = true
 
-                        endedEventSent =
-                            false
+                        endedEventSent = false
 
                         applyInitialPositionIfNeeded()
 
@@ -588,19 +569,16 @@ class KlsKinescopePlayerView(
                                 "duration=${durationMs()}"
                         )
 
-                        if (
-                            !endedEventSent
-                        ) {
-                            endedEventSent =
-                                true
+                        if (!endedEventSent) {
+
+                            endedEventSent = true
 
                             emitEvent(
                                 type = "ended"
                             )
                         }
 
-                        hasStartedPlayback =
-                            false
+                        hasStartedPlayback = false
 
                         updateAutoEnterPictureInPicture(
                             false
@@ -624,6 +602,7 @@ class KlsKinescopePlayerView(
                 newPosition: Player.PositionInfo,
                 reason: Int
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -645,9 +624,8 @@ class KlsKinescopePlayerView(
                 context: Context?,
                 intent: Intent?
             ) {
-                when (
-                    intent?.action
-                ) {
+
+                when (intent?.action) {
 
                     KinescopePictureInPicture
                         .ACTION_PLAY_PAUSE -> {
@@ -673,6 +651,7 @@ class KlsKinescopePlayerView(
             override fun onStart(
                 owner: LifecycleOwner
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -680,6 +659,7 @@ class KlsKinescopePlayerView(
                 if (
                     !isActivityInPictureInPicture()
                 ) {
+
                     restorePictureInPicturePresentation()
                 }
             }
@@ -687,16 +667,28 @@ class KlsKinescopePlayerView(
             override fun onPause(
                 owner: LifecycleOwner
             ) {
+
                 if (disposed) {
                     return
                 }
 
+                /*
+                 * Android 12+ может войти в PiP автоматически.
+                 *
+                 * После ухода приложения в background проверяем,
+                 * действительно ли Activity стала PiP.
+                 *
+                 * Если стала — переключаем реальный video surface
+                 * на native pipPlayerView.
+                 */
                 mainHandler.postDelayed(
                     {
+
                         if (
                             !disposed &&
                             isActivityInPictureInPicture()
                         ) {
+
                             ensurePictureInPicturePresentation()
                         }
                     },
@@ -707,6 +699,7 @@ class KlsKinescopePlayerView(
             override fun onStop(
                 owner: LifecycleOwner
             ) {
+
                 if (disposed) {
                     return
                 }
@@ -720,9 +713,8 @@ class KlsKinescopePlayerView(
                     return
                 }
 
-                if (
-                    pipSessionActive
-                ) {
+                if (pipSessionActive) {
+
                     schedulePictureInPictureExitCheck()
                 }
             }
@@ -742,13 +734,19 @@ class KlsKinescopePlayerView(
             streamHandler
         )
 
+        // --------------------------------------------------------
+        // SCREEN SECURITY
+        // --------------------------------------------------------
+
         activity
             ?.window
             ?.addFlags(
-                WindowManager
-                    .LayoutParams
-                    .FLAG_SECURE
+                WindowManager.LayoutParams.FLAG_SECURE
             )
+
+        // --------------------------------------------------------
+        // INLINE PLAYER
+        // --------------------------------------------------------
 
         playerView.setPlayer(
             player
@@ -756,35 +754,50 @@ class KlsKinescopePlayerView(
 
         playerView.applyTemplateOptions()
 
+        // --------------------------------------------------------
+        // FULLSCREEN
+        // --------------------------------------------------------
+
         playerView
             .onFullscreenButtonCallback = {
+
                 enterFullscreen()
             }
 
         fullscreenPlayerView
             .onFullscreenButtonCallback = {
+
                 exitFullscreen()
             }
 
-        if (
-            pictureInPictureEnabled
-        ) {
+        // --------------------------------------------------------
+        // PiP
+        // --------------------------------------------------------
+
+        if (pictureInPictureEnabled) {
 
             playerView
                 .onPictureInPictureButtonCallback = {
+
                     enterPictureInPicture()
                 }
 
             fullscreenPlayerView
                 .onPictureInPictureButtonCallback = {
+
                     enterPictureInPicture()
                 }
 
             pipPlayerView
                 .onPictureInPictureButtonCallback = {
-                    // Уже находимся в PiP presentation.
+
+                    // Уже находимся в PiP.
                 }
         }
+
+        // --------------------------------------------------------
+        // PLAYER LISTENER
+        // --------------------------------------------------------
 
         player.playbackPlayer
             ?.addListener(
@@ -793,12 +806,14 @@ class KlsKinescopePlayerView(
 
         registerPictureInPictureReceiver()
 
+        // --------------------------------------------------------
+        // LIFECYCLE
+        // --------------------------------------------------------
+
         val lifecycleOwner =
             activity as? LifecycleOwner
 
-        if (
-            lifecycleOwner != null
-        ) {
+        if (lifecycleOwner != null) {
 
             player.bindLifecycle(
                 lifecycle =
@@ -810,8 +825,11 @@ class KlsKinescopePlayerView(
                         Build.VERSION.SDK_INT >=
                         Build.VERSION_CODES.N
                     ) {
+
                         activity?.isInPictureInPictureMode == true
+
                     } else {
+
                         false
                     }
                 },
@@ -829,13 +847,14 @@ class KlsKinescopePlayerView(
                     pipLifecycleObserver
                 )
 
-            lifecycleBound =
-                true
+            lifecycleBound = true
         }
 
-        if (
-            videoId.isNotEmpty()
-        ) {
+        // --------------------------------------------------------
+        // LOAD VIDEO
+        // --------------------------------------------------------
+
+        if (videoId.isNotEmpty()) {
 
             player.loadVideo(
                 videoId,
@@ -913,14 +932,11 @@ class KlsKinescopePlayerView(
 
     private fun applyInitialPositionIfNeeded() {
 
-        if (
-            initialSeekApplied
-        ) {
+        if (initialSeekApplied) {
             return
         }
 
-        initialSeekApplied =
-            true
+        initialSeekApplied = true
 
         if (
             initialPositionMs <= 0L
@@ -932,14 +948,15 @@ class KlsKinescopePlayerView(
             durationMs()
 
         val target =
-            if (
-                duration > 0L
-            ) {
+            if (duration > 0L) {
+
                 initialPositionMs.coerceIn(
                     0L,
                     duration
                 )
+
             } else {
+
                 initialPositionMs
             }
 
@@ -978,6 +995,7 @@ class KlsKinescopePlayerView(
     fun seekToPosition(
         positionMs: Long
     ) {
+
         if (disposed) {
             return
         }
@@ -986,14 +1004,15 @@ class KlsKinescopePlayerView(
             durationMs()
 
         val target =
-            if (
-                duration > 0L
-            ) {
+            if (duration > 0L) {
+
                 positionMs.coerceIn(
                     0L,
                     duration
                 )
+
             } else {
+
                 positionMs.coerceAtLeast(
                     0L
                 )
@@ -1013,9 +1032,7 @@ class KlsKinescopePlayerView(
         return player
             .playbackPlayer
             ?.currentPosition
-            ?.coerceAtLeast(
-                0L
-            )
+            ?.coerceAtLeast(0L)
             ?: 0L
     }
 
@@ -1027,9 +1044,7 @@ class KlsKinescopePlayerView(
                 ?.duration
                 ?: 0L
 
-        return if (
-            duration > 0L
-        ) {
+        return if (duration > 0L) {
             duration
         } else {
             0L
@@ -1076,8 +1091,7 @@ class KlsKinescopePlayerView(
                     ?: Player.STATE_IDLE
                 ),
             "message" to message,
-            "timestampMs" to
-                System.currentTimeMillis()
+            "timestampMs" to System.currentTimeMillis()
         )
     }
 
@@ -1085,6 +1099,7 @@ class KlsKinescopePlayerView(
         type: String,
         message: String = ""
     ) {
+
         if (disposed) {
             return
         }
@@ -1097,9 +1112,8 @@ class KlsKinescopePlayerView(
 
         val send = {
 
-            if (
-                !disposed
-            ) {
+            if (!disposed) {
+
                 try {
 
                     eventSink
@@ -1145,22 +1159,25 @@ class KlsKinescopePlayerView(
             activity
                 ?: return false
 
-        return Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.N &&
-            hostActivity.isInPictureInPictureMode
+        return (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+                hostActivity.isInPictureInPictureMode
+            )
     }
 
     private fun ensurePictureInPicturePresentation() {
 
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return
         }
 
-        pipSessionActive =
-            true
+        pipSessionActive = true
 
+        /*
+         * КЛЮЧЕВОЙ МОМЕНТ:
+         * поверх Flutter создаётся native overlay,
+         * куда переключается настоящее видео.
+         */
         showPictureInPictureVideoOverlay()
 
         preparePictureInPictureUi()
@@ -1172,11 +1189,13 @@ class KlsKinescopePlayerView(
         startPictureInPictureMonitor()
     }
 
+    // ============================================================
+    // REAL VIDEO OVERLAY FOR PiP
+    // ============================================================
+
     private fun showPictureInPictureVideoOverlay(): Boolean {
 
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return false
         }
 
@@ -1191,9 +1210,8 @@ class KlsKinescopePlayerView(
             activity
                 ?: return false
 
-        if (
-            isFullscreen
-        ) {
+        if (isFullscreen) {
+
             exitFullscreen()
         }
 
@@ -1212,14 +1230,11 @@ class KlsKinescopePlayerView(
                     Color.BLACK
                 )
 
-                isClickable =
-                    true
+                isClickable = true
 
-                isFocusable =
-                    true
+                isFocusable = true
 
-                elevation =
-                    10000f
+                elevation = 10000f
 
                 layoutParams =
                     ViewGroup.LayoutParams(
@@ -1231,8 +1246,7 @@ class KlsKinescopePlayerView(
         try {
 
             (
-                pipPlayerView.parent
-                    as? ViewGroup
+                pipPlayerView.parent as? ViewGroup
                 )
                 ?.removeView(
                     pipPlayerView
@@ -1256,6 +1270,10 @@ class KlsKinescopePlayerView(
 
             overlay.bringToFront()
 
+            /*
+             * Переключаем РЕАЛЬНЫЙ Kinescope video surface
+             * с Flutter PlatformView на отдельный PiP PlayerView.
+             */
             KinescopePlayerView
                 .switchTargetView(
                     playerView,
@@ -1271,21 +1289,17 @@ class KlsKinescopePlayerView(
                     true
                 )
 
-            pipPlayerView
-                .requestLayout()
+            pipPlayerView.requestLayout()
 
-            pipPlayerView
-                .invalidate()
+            pipPlayerView.invalidate()
 
             overlay.requestLayout()
 
             overlay.invalidate()
 
-            pipOverlayRoot =
-                overlay
+            pipOverlayRoot = overlay
 
-            pipPlayerOnOverlay =
-                true
+            pipPlayerOnOverlay = true
 
             Log.d(
                 TAG,
@@ -1307,16 +1321,14 @@ class KlsKinescopePlayerView(
             try {
 
                 (
-                    pipPlayerView.parent
-                        as? ViewGroup
+                    pipPlayerView.parent as? ViewGroup
                     )
                     ?.removeView(
                         pipPlayerView
                     )
 
                 (
-                    overlay.parent
-                        as? ViewGroup
+                    overlay.parent as? ViewGroup
                     )
                     ?.removeView(
                         overlay
@@ -1333,11 +1345,9 @@ class KlsKinescopePlayerView(
                 )
             }
 
-            pipOverlayRoot =
-                null
+            pipOverlayRoot = null
 
-            pipPlayerOnOverlay =
-                false
+            pipPlayerOnOverlay = false
 
             return false
         }
@@ -1347,15 +1357,11 @@ class KlsKinescopePlayerView(
 
         stopPictureInPictureMonitor()
 
-        pipSessionActive =
-            false
+        pipSessionActive = false
 
-        pipExitCheckScheduled =
-            false
+        pipExitCheckScheduled = false
 
-        if (
-            pipPlayerOnOverlay
-        ) {
+        if (pipPlayerOnOverlay) {
 
             try {
 
@@ -1366,14 +1372,11 @@ class KlsKinescopePlayerView(
                         player
                     )
 
-                playerView
-                    .applyTemplateOptions()
+                playerView.applyTemplateOptions()
 
-                playerView
-                    .requestLayout()
+                playerView.requestLayout()
 
-                playerView
-                    .invalidate()
+                playerView.invalidate()
 
             } catch (
                 error: Throwable
@@ -1390,8 +1393,7 @@ class KlsKinescopePlayerView(
         try {
 
             (
-                pipPlayerView.parent
-                    as? ViewGroup
+                pipPlayerView.parent as? ViewGroup
                 )
                 ?.removeView(
                     pipPlayerView
@@ -1411,8 +1413,7 @@ class KlsKinescopePlayerView(
         try {
 
             (
-                pipOverlayRoot?.parent
-                    as? ViewGroup
+                pipOverlayRoot?.parent as? ViewGroup
                 )
                 ?.removeView(
                     pipOverlayRoot
@@ -1429,11 +1430,9 @@ class KlsKinescopePlayerView(
             )
         }
 
-        pipOverlayRoot =
-            null
+        pipOverlayRoot = null
 
-        pipPlayerOnOverlay =
-            false
+        pipPlayerOnOverlay = false
 
         restorePictureInPictureUi()
     }
@@ -1511,17 +1510,14 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipExitCheckScheduled =
-            true
+        pipExitCheckScheduled = true
 
         mainHandler.postDelayed(
             {
 
-                pipExitCheckScheduled =
-                    false
+                pipExitCheckScheduled = false
 
                 resolvePictureInPictureExit()
-
             },
             350L
         )
@@ -1548,24 +1544,36 @@ class KlsKinescopePlayerView(
         val lifecycleOwner =
             activity as? LifecycleOwner
 
-        val activityVisible =
+        /*
+         * ВАЖНО:
+         *
+         * Здесь раньше перенос перед == true приводил
+         * к тому, что Kotlin видел Boolean?.
+         *
+         * Теперь результат гарантированно Boolean.
+         */
+        val activityVisible: Boolean =
             lifecycleOwner
                 ?.lifecycle
                 ?.currentState
                 ?.isAtLeast(
                     Lifecycle.State.STARTED
-                )
-                == true
+                ) == true
 
-        if (
-            activityVisible
-        ) {
+        /*
+         * Пользователь нажал на PiP и вернулся в приложение.
+         */
+        if (activityVisible) {
 
             restorePictureInPicturePresentation()
 
             return
         }
 
+        /*
+         * Телефон заблокирован.
+         * Это не считаем закрытием видео.
+         */
         if (
             !isScreenInteractive()
         ) {
@@ -1575,6 +1583,10 @@ class KlsKinescopePlayerView(
             return
         }
 
+        /*
+         * Activity в фоне, экран включён, PiP исчез.
+         * Скорее всего пользователь закрыл окно.
+         */
         Log.d(
             TAG,
             "PiP window closed while app remains in background"
@@ -1583,6 +1595,7 @@ class KlsKinescopePlayerView(
         if (
             !isEnded()
         ) {
+
             player.pause()
         }
 
@@ -1611,7 +1624,7 @@ class KlsKinescopePlayerView(
     }
 
     // ============================================================
-    // ANDROID 13+ SYSTEM CLOSE ACTION
+    // ANDROID 13+ CLOSE ACTION
     // ============================================================
 
     private fun createPictureInPictureCloseRemoteAction(): RemoteAction? {
@@ -1628,9 +1641,12 @@ class KlsKinescopePlayerView(
             val closeIntent =
                 Intent(
                     pipCloseAction
-                ).setPackage(
-                    appContext.packageName
-                )
+                ).apply {
+
+                    setPackage(
+                        appContext.packageName
+                    )
+                }
 
             val flags =
                 PendingIntent.FLAG_UPDATE_CURRENT or
@@ -1669,22 +1685,14 @@ class KlsKinescopePlayerView(
     }
 
     /*
-     * ВАЖНО:
+     * Здесь специально НЕ пытаемся получать
+     * hostActivity.pictureInPictureParams.
      *
-     * Раньше здесь использовалось:
+     * Такого доступного getter у Activity нет,
+     * и именно он ломал предыдущую сборку.
      *
-     * hostActivity.pictureInPictureParams
-     *
-     * Но Activity не предоставляет такой getter,
-     * поэтому Android-сборка падала с:
-     *
-     * Unresolved reference 'pictureInPictureParams'
-     *
-     * Основные PiP параметры и closeAction задаются
-     * в updateAutoEnterPictureInPicture().
-     *
-     * Если Kinescope обновляет свои actions отдельно,
-     * fallback monitor всё равно отслеживает закрытие PiP.
+     * CloseAction устанавливается ниже,
+     * когда мы сами строим PictureInPictureParams.
      */
     private fun applyPictureInPictureCloseAction() {
 
@@ -1698,15 +1706,13 @@ class KlsKinescopePlayerView(
 
         Log.d(
             TAG,
-            "PiP close action is managed by current PiP params"
+            "PiP close action managed by current PiP configuration"
         )
     }
 
     private fun closePictureInPictureFromSystem() {
 
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return
         }
 
@@ -1718,6 +1724,7 @@ class KlsKinescopePlayerView(
         if (
             !isEnded()
         ) {
+
             player.pause()
         }
 
@@ -1725,9 +1732,9 @@ class KlsKinescopePlayerView(
 
         mainHandler.postDelayed(
             {
-                if (
-                    !disposed
-                ) {
+
+                if (!disposed) {
+
                     try {
 
                         activity?.finish()
@@ -1749,7 +1756,7 @@ class KlsKinescopePlayerView(
     }
 
     // ============================================================
-    // PICTURE IN PICTURE
+    // ENTER PICTURE IN PICTURE
     // ============================================================
 
     private fun enterPictureInPicture() {
@@ -1789,11 +1796,22 @@ class KlsKinescopePlayerView(
             return
         }
 
+        /*
+         * isSupported() у SDK nullable.
+         *
+         * Поэтому НЕ:
+         *
+         * !KinescopePictureInPicture.isSupported(...)
+         *
+         * а именно:
+         *
+         * isSupported(...) != true
+         */
         if (
-            !KinescopePictureInPicture
+            KinescopePictureInPicture
                 .isSupported(
                     hostActivity
-                )
+                ) != true
         ) {
 
             Log.d(
@@ -1804,26 +1822,37 @@ class KlsKinescopePlayerView(
             return
         }
 
-        if (
-            isFullscreen
-        ) {
+        if (isFullscreen) {
+
             exitFullscreen()
         }
 
-        showPictureInPictureVideoOverlay()
+        /*
+         * Перед переходом в PiP кладём настоящее видео
+         * в native overlay.
+         */
+        val overlayReady =
+            showPictureInPictureVideoOverlay()
+
+        if (!overlayReady) {
+
+            Log.w(
+                TAG,
+                "PiP overlay could not be prepared; using inline player"
+            )
+        }
 
         preparePictureInPictureUi()
 
         if (
             !isPlaying()
         ) {
+
             player.play()
         }
 
         val pipView =
-            if (
-                pipPlayerOnOverlay
-            ) {
+            if (pipPlayerOnOverlay) {
                 pipPlayerView
             } else {
                 playerView
@@ -1831,9 +1860,7 @@ class KlsKinescopePlayerView(
 
         pipView.post outerPost@ {
 
-            if (
-                disposed
-            ) {
+            if (disposed) {
 
                 restorePictureInPicturePresentation()
 
@@ -1841,14 +1868,11 @@ class KlsKinescopePlayerView(
             }
 
             val anchorView =
-                pipView
-                    .getPipAnchorView()
+                pipView.getPipAnchorView()
 
             anchorView.post innerPost@ {
 
-                if (
-                    disposed
-                ) {
+                if (disposed) {
 
                     restorePictureInPicturePresentation()
 
@@ -1877,8 +1901,7 @@ class KlsKinescopePlayerView(
                             )
 
                     /*
-                     * enter() возвращает Boolean?,
-                     * поэтому сравниваем именно с true.
+                     * enter() тоже возвращает Boolean?.
                      */
                     if (
                         entered == true
@@ -1889,8 +1912,7 @@ class KlsKinescopePlayerView(
                             "Entered Picture-in-Picture"
                         )
 
-                        pipSessionActive =
-                            true
+                        pipSessionActive = true
 
                         emitEvent(
                             type = "pip_enter"
@@ -1935,6 +1957,7 @@ class KlsKinescopePlayerView(
     private fun updateAutoEnterPictureInPicture(
         shouldAutoEnter: Boolean
     ) {
+
         if (
             disposed ||
             !pictureInPictureEnabled
@@ -1953,11 +1976,14 @@ class KlsKinescopePlayerView(
             activity
                 ?: return
 
+        /*
+         * Та же nullable-проверка.
+         */
         if (
-            !KinescopePictureInPicture
+            KinescopePictureInPicture
                 .isSupported(
                     hostActivity
-                )
+                ) != true
         ) {
             return
         }
@@ -1984,6 +2010,10 @@ class KlsKinescopePlayerView(
                         true
                     )
 
+            /*
+             * Анимация ухода в PiP стартует
+             * непосредственно от области видео.
+             */
             try {
 
                 val anchorView =
@@ -2053,14 +2083,11 @@ class KlsKinescopePlayerView(
 
     private fun preparePictureInPictureUi() {
 
-        if (
-            pipUiPrepared
-        ) {
+        if (pipUiPrepared) {
             return
         }
 
-        pipUiPrepared =
-            true
+        pipUiPrepared = true
 
         try {
 
@@ -2099,8 +2126,7 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipUiPrepared =
-            false
+        pipUiPrepared = false
 
         try {
 
@@ -2157,8 +2183,7 @@ class KlsKinescopePlayerView(
         if (
             Build.VERSION.SDK_INT >=
             Build.VERSION_CODES.N &&
-            !hostActivity
-                .isInPictureInPictureMode
+            !hostActivity.isInPictureInPictureMode
         ) {
             return
         }
@@ -2191,11 +2216,12 @@ class KlsKinescopePlayerView(
             return
         }
 
-        if (
-            isPlaying()
-        ) {
+        if (isPlaying()) {
+
             player.pause()
+
         } else {
+
             player.play()
         }
 
@@ -2252,8 +2278,7 @@ class KlsKinescopePlayerView(
                 )
             }
 
-            pipReceiverRegistered =
-                true
+            pipReceiverRegistered = true
 
         } catch (
             error: Throwable
@@ -2275,8 +2300,7 @@ class KlsKinescopePlayerView(
             return
         }
 
-        pipReceiverRegistered =
-            false
+        pipReceiverRegistered = false
 
         try {
 
@@ -2325,24 +2349,20 @@ class KlsKinescopePlayerView(
             return
         }
 
-        if (
-            pipPlayerOnOverlay
-        ) {
+        if (pipPlayerOnOverlay) {
+
             restorePictureInPicturePresentation()
         }
 
-        isFullscreen =
-            true
+        isFullscreen = true
 
         val dialog =
             Dialog(
                 hostActivity,
-                android.R.style
-                    .Theme_Black_NoTitleBar_Fullscreen
+                android.R.style.Theme_Black_NoTitleBar_Fullscreen
             )
 
-        fullscreenDialog =
-            dialog
+        fullscreenDialog = dialog
 
         dialog.requestWindowFeature(
             Window.FEATURE_NO_TITLE
@@ -2365,8 +2385,7 @@ class KlsKinescopePlayerView(
             }
 
         (
-            fullscreenPlayerView.parent
-                as? ViewGroup
+            fullscreenPlayerView.parent as? ViewGroup
             )
             ?.removeView(
                 fullscreenPlayerView
@@ -2400,15 +2419,11 @@ class KlsKinescopePlayerView(
                         )
 
                     window.addFlags(
-                        WindowManager
-                            .LayoutParams
-                            .FLAG_SECURE
+                        WindowManager.LayoutParams.FLAG_SECURE
                     )
 
                     window.addFlags(
-                        WindowManager
-                            .LayoutParams
-                            .FLAG_FULLSCREEN
+                        WindowManager.LayoutParams.FLAG_FULLSCREEN
                     )
 
                     hideSystemBars(
@@ -2428,11 +2443,9 @@ class KlsKinescopePlayerView(
                 fullscreenPlayerView
                     .applyTemplateOptions()
 
-                fullscreenPlayerView
-                    .requestLayout()
+                fullscreenPlayerView.requestLayout()
 
-                fullscreenPlayerView
-                    .invalidate()
+                fullscreenPlayerView.invalidate()
 
                 root.requestLayout()
 
@@ -2448,18 +2461,19 @@ class KlsKinescopePlayerView(
                     error
                 )
 
-                isFullscreen =
-                    false
+                isFullscreen = false
 
                 dialog.dismiss()
             }
         }
 
         dialog.setOnCancelListener {
+
             restoreInlinePlayer()
         }
 
         dialog.setOnDismissListener {
+
             restoreInlinePlayer()
         }
 
@@ -2477,11 +2491,9 @@ class KlsKinescopePlayerView(
                 error
             )
 
-            isFullscreen =
-                false
+            isFullscreen = false
 
-            fullscreenDialog =
-                null
+            fullscreenDialog = null
         }
     }
 
@@ -2517,8 +2529,7 @@ class KlsKinescopePlayerView(
             return
         }
 
-        isFullscreen =
-            false
+        isFullscreen = false
 
         try {
 
@@ -2529,14 +2540,11 @@ class KlsKinescopePlayerView(
                     player
                 )
 
-            playerView
-                .applyTemplateOptions()
+            playerView.applyTemplateOptions()
 
-            playerView
-                .requestLayout()
+            playerView.requestLayout()
 
-            playerView
-                .invalidate()
+            playerView.invalidate()
 
         } catch (
             error: Throwable
@@ -2550,24 +2558,20 @@ class KlsKinescopePlayerView(
         }
 
         (
-            fullscreenPlayerView.parent
-                as? ViewGroup
+            fullscreenPlayerView.parent as? ViewGroup
             )
             ?.removeView(
                 fullscreenPlayerView
             )
 
-        fullscreenDialog =
-            null
+        fullscreenDialog = null
 
         activity
             ?.window
             ?.let { window ->
 
                 window.clearFlags(
-                    WindowManager
-                        .LayoutParams
-                        .FLAG_FULLSCREEN
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN
                 )
 
                 showSystemBars(
@@ -2593,12 +2597,8 @@ class KlsKinescopePlayerView(
             window
                 .insetsController
                 ?.hide(
-                    android.view.WindowInsets
-                        .Type
-                        .statusBars() or
-                        android.view.WindowInsets
-                            .Type
-                            .navigationBars()
+                    android.view.WindowInsets.Type.statusBars() or
+                        android.view.WindowInsets.Type.navigationBars()
                 )
 
         } else {
@@ -2626,12 +2626,8 @@ class KlsKinescopePlayerView(
             window
                 .insetsController
                 ?.show(
-                    android.view.WindowInsets
-                        .Type
-                        .statusBars() or
-                        android.view.WindowInsets
-                            .Type
-                            .navigationBars()
+                    android.view.WindowInsets.Type.statusBars() or
+                        android.view.WindowInsets.Type.navigationBars()
                 )
 
         } else {
@@ -2647,9 +2643,7 @@ class KlsKinescopePlayerView(
 
     override fun dispose() {
 
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return
         }
 
@@ -2673,8 +2667,7 @@ class KlsKinescopePlayerView(
             null
         )
 
-        disposed =
-            true
+        disposed = true
 
         methodChannel
             .setMethodCallHandler(
@@ -2686,8 +2679,7 @@ class KlsKinescopePlayerView(
                 null
             )
 
-        eventSink =
-            null
+        eventSink = null
 
         unregisterPictureInPictureReceiver()
 
@@ -2733,9 +2725,8 @@ class KlsKinescopePlayerView(
 
         try {
 
-            if (
-                isFullscreen
-            ) {
+            if (isFullscreen) {
+
                 restoreInlinePlayer()
             }
 
@@ -2747,8 +2738,7 @@ class KlsKinescopePlayerView(
             fullscreenDialog
                 ?.dismiss()
 
-            fullscreenDialog =
-                null
+            fullscreenDialog = null
 
         } catch (
             error: Throwable
@@ -2764,8 +2754,7 @@ class KlsKinescopePlayerView(
         try {
 
             (
-                pipPlayerView.parent
-                    as? ViewGroup
+                pipPlayerView.parent as? ViewGroup
                 )
                 ?.removeView(
                     pipPlayerView
@@ -2784,14 +2773,11 @@ class KlsKinescopePlayerView(
 
         try {
 
-            if (
-                lifecycleBound
-            ) {
+            if (lifecycleBound) {
 
                 player.unbindLifecycle()
 
-                lifecycleBound =
-                    false
+                lifecycleBound = false
             }
 
         } catch (
@@ -2823,9 +2809,7 @@ class KlsKinescopePlayerView(
         activity
             ?.window
             ?.clearFlags(
-                WindowManager
-                    .LayoutParams
-                    .FLAG_SECURE
+                WindowManager.LayoutParams.FLAG_SECURE
             )
     }
 }
@@ -2839,8 +2823,7 @@ private fun Map<*, *>.booleanValue(
     fallback: Boolean
 ): Boolean {
 
-    return this[key]
-        as? Boolean
+    return this[key] as? Boolean
         ?: fallback
 }
 
@@ -2889,6 +2872,7 @@ private fun Context.findActivity(): Activity? {
         if (
             current is Activity
         ) {
+
             return current
         }
 
@@ -2896,6 +2880,5 @@ private fun Context.findActivity(): Activity? {
             current.baseContext
     }
 
-    return current
-        as? Activity
+    return current as? Activity
 }
