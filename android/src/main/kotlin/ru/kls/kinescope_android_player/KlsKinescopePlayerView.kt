@@ -436,6 +436,8 @@ class KlsKinescopePlayerView(
                     return
                 }
 
+                updateKeepScreenOn()
+
                 val previous =
                     lastPlayWhenReady
 
@@ -504,6 +506,8 @@ class KlsKinescopePlayerView(
                     return
                 }
 
+                updateKeepScreenOn()
+
                 Log.d(
                     TAG,
                     "isPlaying=$isPlaying " +
@@ -521,6 +525,8 @@ class KlsKinescopePlayerView(
                 if (disposed) {
                     return
                 }
+
+                updateKeepScreenOn()
 
                 when (playbackState) {
 
@@ -671,6 +677,13 @@ class KlsKinescopePlayerView(
                 if (disposed) {
                     return
                 }
+
+                // Отдаём Flutter максимально свежую позицию ДО того,
+                // как Activity окончательно уйдёт в background/lock.
+                // Само воспроизведение этим не останавливаем.
+                emitEvent(
+                    type = "background"
+                )
 
                 /*
                  * Android 12+ может войти в PiP автоматически.
@@ -879,6 +892,8 @@ class KlsKinescopePlayerView(
                         updateAutoEnterPictureInPicture(
                             wantsPlayback
                         )
+
+                        updateKeepScreenOn()
                     }
                 },
 
@@ -981,6 +996,10 @@ class KlsKinescopePlayerView(
         }
 
         player.play()
+
+        mainHandler.post {
+            updateKeepScreenOn()
+        }
     }
 
     fun pause() {
@@ -990,6 +1009,10 @@ class KlsKinescopePlayerView(
         }
 
         player.pause()
+
+        mainHandler.post {
+            updateKeepScreenOn()
+        }
     }
 
     fun seekToPosition(
@@ -1060,6 +1083,42 @@ class KlsKinescopePlayerView(
 
         return player.playbackPlayer?.playbackState ==
             Player.STATE_ENDED
+    }
+
+    // ============================================================
+    // SCREEN AWAKE
+    // ============================================================
+
+    private fun updateKeepScreenOn() {
+
+        val playbackPlayer =
+            player.playbackPlayer
+
+        val shouldKeepScreenOn =
+            if (
+                disposed ||
+                playbackPlayer == null
+            ) {
+                false
+            } else {
+                playbackPlayer.playWhenReady &&
+                    playbackPlayer.playbackState != Player.STATE_ENDED
+            }
+
+        setPlayerViewsKeepScreenOn(
+            shouldKeepScreenOn
+        )
+    }
+
+    private fun setPlayerViewsKeepScreenOn(
+        enabled: Boolean
+    ) {
+
+        playerView.keepScreenOn = enabled
+
+        fullscreenPlayerView.keepScreenOn = enabled
+
+        pipPlayerView.keepScreenOn = enabled
     }
 
     // ============================================================
@@ -2653,6 +2712,10 @@ class KlsKinescopePlayerView(
                 "position=${currentPositionMs()} " +
                 "duration=${durationMs()} " +
                 "playing=${isPlaying()}"
+        )
+
+        setPlayerViewsKeepScreenOn(
+            false
         )
 
         emitEvent(
