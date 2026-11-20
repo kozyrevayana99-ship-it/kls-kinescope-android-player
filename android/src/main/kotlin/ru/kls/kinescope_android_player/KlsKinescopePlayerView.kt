@@ -255,6 +255,8 @@ class KlsKinescopePlayerView(
 
     private var fullscreenDialog: Dialog? = null
 
+    private var fullscreenSecurityMirror: KlsFullscreenSecurityMirror? = null
+
     private var isFullscreen = false
 
     private var disposed = false
@@ -751,11 +753,8 @@ class KlsKinescopePlayerView(
         // SCREEN SECURITY
         // --------------------------------------------------------
 
-        activity
-            ?.window
-            ?.addFlags(
-                WindowManager.LayoutParams.FLAG_SECURE
-            )
+        // The app's screen_security action owns the Activity capture policy.
+        // Opening this player must preserve the current user's role policy.
 
         // --------------------------------------------------------
         // INLINE PLAYER
@@ -2462,6 +2461,13 @@ class KlsKinescopePlayerView(
             root
         )
 
+        // Bind before show(), so the first fullscreen frame has the same
+        // capture policy as the Activity. Later role changes propagate too.
+        fullscreenSecurityMirror?.close()
+        fullscreenSecurityMirror = dialog.window?.let { window ->
+            KlsFullscreenSecurityMirror.attach(hostActivity.window, window)
+        }
+
         dialog.setOnShowListener {
 
             dialog.window
@@ -2476,10 +2482,6 @@ class KlsKinescopePlayerView(
                         .setBackgroundDrawableResource(
                             android.R.color.black
                         )
-
-                    window.addFlags(
-                        WindowManager.LayoutParams.FLAG_SECURE
-                    )
 
                     window.addFlags(
                         WindowManager.LayoutParams.FLAG_FULLSCREEN
@@ -2552,6 +2554,8 @@ class KlsKinescopePlayerView(
 
             isFullscreen = false
 
+            fullscreenSecurityMirror?.close()
+            fullscreenSecurityMirror = null
             fullscreenDialog = null
         }
     }
@@ -2581,6 +2585,9 @@ class KlsKinescopePlayerView(
     }
 
     private fun restoreInlinePlayer() {
+
+        fullscreenSecurityMirror?.close()
+        fullscreenSecurityMirror = null
 
         if (
             !isFullscreen
@@ -2869,11 +2876,9 @@ class KlsKinescopePlayerView(
             )
         }
 
-        activity
-            ?.window
-            ?.clearFlags(
-                WindowManager.LayoutParams.FLAG_SECURE
-            )
+        fullscreenSecurityMirror?.close()
+        fullscreenSecurityMirror = null
+        // Disposing a player must not clear the app's capture policy.
     }
 }
 
@@ -2944,4 +2949,66 @@ private fun Context.findActivity(): Activity? {
     }
 
     return current as? Activity
+}
+
+
+/** Mirrors only FLAG_SECURE; never changes the Activity's own policy.
+ * Android dispatches Window.Callback.onWindowAttributesChanged synchronously
+ * from Window.setFlags(), which is also what screen_security uses. No polling
+ * and no delayed flag restoration are needed when the user's role changes.
+ */
+private class KlsFullscreenSecurityMirror private constructor(
+    private val owner: Window,
+    private val callback: CaptureCallback
+) : AutoCloseable {
+    private var closed = false
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        callback.onPolicyChanged = null
+        if (owner.callback === callback) {
+            var previous = callback.previous
+            // Fullscreen players can be closed out of order. Skip wrappers
+            // that already released their dialog instead of retaining them.
+            while (previous is CaptureCallback && previous.onPolicyChanged == null) {
+                previous = previous.previous
+            }
+            owner.callback = previous
+        }
+    }
+
+    private class CaptureCallback(
+        val previous: Window.Callback,
+        var onPolicyChanged: ((WindowManager.LayoutParams) -> Unit)?
+    ) : Window.Callback by previous {
+        override fun onWindowAttributesChanged(attrs: WindowManager.LayoutParams) {
+            previous.onWindowAttributesChanged(attrs)
+            onPolicyChanged?.invoke(attrs)
+        }
+    }
+
+    companion object {
+        fun attach(owner: Window, fullscreen: Window): KlsFullscreenSecurityMirror? {
+            if (owner === fullscreen) return null
+            val previous = owner.callback
+            if (previous == null) {
+                // A normal Activity always has a callback. Protect a dialog
+                // conservatively if a custom host has not installed one yet.
+                fullscreen.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                return null
+            }
+            val sync: (WindowManager.LayoutParams) -> Unit = { attrs ->
+                val flag = WindowManager.LayoutParams.FLAG_SECURE
+                val wanted = attrs.flags and flag
+                if ((fullscreen.attributes.flags and flag) != wanted) {
+                    fullscreen.setFlags(wanted, flag)
+                }
+            }
+            sync(owner.attributes)
+            val callback = CaptureCallback(previous, sync)
+            owner.callback = callback
+            return KlsFullscreenSecurityMirror(owner, callback)
+        }
+    }
 }
